@@ -84,11 +84,14 @@ DEFAUTS: dict = {
         "relancer_spontanees": False,
         "rapport_jours": 3,
         "spontanees_par_jour": 5,
-        "envois_par_jour": 10,  # mails envoyés depuis Gmail au plus par jour (toujours sur ton clic)  # brouillons de candidature spontanée préparés au plus par jour  # un rapport récapitulatif tous les N jours
+        "envois_par_jour": 10,
+        "envois_auto_par_jour": 10,  # candidatures envoyées automatiquement au plus par jour
+        "envoi_auto_min": 50,  # score minimal pour une candidature automatique (sous le seuil « fabrication »)
+        "candidatures_auto_par_passage": 3,  # dossiers préparés par passage (Gemini et Chrome sont lents)  # mails envoyés depuis Gmail au plus par jour (toujours sur ton clic)  # brouillons de candidature spontanée préparés au plus par jour  # un rapport récapitulatif tous les N jours
     },
     "veille": {"frequence_minutes": 60, "entreprises_par_defaut": 5, "initialisee": False},
     # Envoi en 1 clic depuis Gmail : désactivé tant que tu ne l'actives pas (onglet Spontanées).
-    "envoi": {"actif": False},
+    "envoi": {"actif": False, "auto": False},
     # Coordonnées imprimées sur les CV et LM générés (jamais envoyées au LLM).
     "identite": {},
 }

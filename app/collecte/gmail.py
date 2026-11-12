@@ -46,6 +46,11 @@ def identifiants(boite: str = "principale") -> Credentials:
             return creds
         except RefreshError:
             pass  # jeton révoqué ou expiré (mode Test : 7 jours) -> nouvelle autorisation
+    if os.getenv("CI"):  # serveur sans écran (GitHub Actions) : impossible d'ouvrir un navigateur
+        raise RuntimeError(
+            f"Autorisation Gmail « {boite} » expirée : relance l'import de cette boîte sur le PC,"
+            " puis outils/configurer_github.sh pour mettre à jour le jeton."
+        )
     secret = chemin_client_secret()
     if not secret.exists():
         raise FileNotFoundError(f"Identifiant OAuth introuvable : {secret}")

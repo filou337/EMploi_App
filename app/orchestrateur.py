@@ -5,7 +5,8 @@ Usage :  python -m app.orchestrateur [--sans-gmail] [--etapes collecte,validite,
 Ordre : Recherche (alertes Gmail des 2 derniers jours) -> Suivi (réponses, accusés de réception :
 valide les candidatures envoyées) -> Validité (doublons, fraîcheur)
 -> Fiches (site carrières des nouveaux employeurs) -> Veille (entreprises surveillées)
--> Matching (qualification des offres à fiche complète) -> Spontanées (5 brouillons par jour au plus)
+-> Matching (qualification des offres à fiche complète) -> Candidatures auto (CV + LM + mail ; envoi sous le seuil, mise de côté au-dessus)
+-> Spontanées (5 brouillons par jour au plus)
 -> Rapport (tous les 3 jours).
 Un verrou Postgres empêche deux passages simultanés. Chaque agent écrit son bilan dans le
 journal (salon) ; une erreur d'un agent n'arrête pas les suivants.
@@ -18,7 +19,7 @@ from datetime import UTC, datetime
 from psycopg.types.json import Jsonb
 
 from app import pertinence, rapport
-from app.agents import matching, suivi, veille
+from app.agents import candidature_auto, matching, suivi, veille
 from app.collecte.importer import importer_boite
 from app.config import boites_gmail, chemin_token
 from app.db import connexion
@@ -37,6 +38,7 @@ ETAPES = (
     "fiches",
     "veille",
     "matching",
+    "candidatures_auto",
     "spontanees",
     "rapport",
 )
@@ -58,6 +60,11 @@ def _collecte() -> dict:
         importer_boite(boite, jours=2)  # journalise lui-même son passage
         lues.append(boite)
     return {"boîtes lues": len(lues)}
+
+
+def _candidatures_auto() -> dict:
+    with connexion() as conn:
+        return candidature_auto.executer(conn)
 
 
 def _spontanees() -> dict:
@@ -94,6 +101,7 @@ AGENTS = {
     "fiches": lambda: chercher_fiches(limite=40),
     "veille": _veille,
     "matching": _matching,
+    "candidatures_auto": _candidatures_auto,
     "spontanees": _spontanees,
     "rapport": _rapport,
 }
@@ -101,6 +109,7 @@ JOURNALISES_ICI = {
     "validite",
     "veille",
     "matching",
+    "candidatures_auto",
     "spontanees",
     "rapport",
 }  # collecte et fiches écrivent leur propre bilan

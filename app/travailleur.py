@@ -93,6 +93,10 @@ def executer(conn: psycopg.Connection, d: dict) -> tuple[dict, bytes | None]:
 
         if p.get("type") == "spontanee":
             return envoi.envoyer_spontanee(conn, int(p["id"]), p["objet"], p["corps"]), None
+        if p.get("type") == "candidature":
+            return envoi.envoyer_candidature(
+                conn, int(p["id"]), p.get("objet"), p.get("corps")
+            ), None
         if p.get("type") == "relance":
             return envoi.envoyer_relance(conn, int(p["id"]), p["objet"], p["corps"]), None
         raise ValueError("Type d'envoi inconnu.")

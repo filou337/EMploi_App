@@ -19,6 +19,7 @@ const AGENTS = {
   fiches: { nom: "Agent Fiches", role: "cherche la fiche complète chez l'employeur", c: "#9a641d" },
   suivi: { nom: "Agent Suivi", role: "relit les envois, accusés et réponses", c: "#2d7a4f" },
   veille: { nom: "Agent Veille", role: "surveille le site carrières de tes entreprises cibles", c: "#5b4b8a" },
+  candidatures_auto: { nom: "Agent Candidatures", role: "prépare CV + LM + mail, envoie sous le seuil, met de côté au-dessus", c: "#2f5d8a" },
   spontanees: { nom: "Agent Spontanées", role: "prépare des mails de candidature spontanée (envoyés par toi)", c: "#8a4b6b" },
   rapport: { nom: "Agent Rapport", role: "fait le point tous les 3 jours", c: "#4a6b2f" },
   matching: { nom: "Agent Matching", role: "compare ton CV aux offres et qualifie les meilleures", c: "#a3352b" },
@@ -687,7 +688,7 @@ function filJournal(rows) {
     if (x.tache === "collecte") resume = `${x.mails_lus} mails lus, ${x.offres_vues} offres vues, ${x.offres_vues - x.doublons} nouvelles`;
     else if (x.tache === "validite") resume = `${x.doublons} doublons repérés, ${x.rejetees} offres passées en « ancienne »`;
     else if (x.tache === "fiches") resume = Object.entries(d).map(([k, n]) => `${n} ${k}`).join(", ") || `${x.offres_vues} offres contrôlées`;
-    else if (["veille", "matching", "rapport", "spontanees"].includes(x.tache)) resume = Object.entries(d).map(([k, n]) => `${k} : ${n}`).join(" · ") || "rien à signaler";
+    else if (["veille", "matching", "rapport", "spontanees", "candidatures_auto"].includes(x.tache)) resume = Object.entries(d).map(([k, n]) => `${k} : ${n}`).join(" · ") || "rien à signaler";
     else if (x.tache === "suivi") resume = `${x.mails_lus} mails relus` + (Object.keys(d).length ? ` — ${Object.entries(d).map(([k, n]) => `${n} ${k}`).join(", ")}` : "");
     else resume = `${x.mails_lus} mails, ${x.offres_vues} offres`;
     return `<li><span class="avatar" style="background:${a.c}">${esc(a.nom.split(" ").pop()[0])}</span>
@@ -797,6 +798,69 @@ async function vueSpontanees(v) {
         ignorer: "Brouillon ignoré.", opposition: "Opposition enregistrée." }[a]);
       if (a !== "enregistrer") router();
     } catch (err) { toast(err.message); }
+  };
+}
+
+// --- Candidatures automatiques ------------------------------------------------------------------
+const STATUT_AUTO = { pret: ["ambre", "prête (envoi au prochain passage)"], envoyee: ["vert", "envoyée"],
+  mise_de_cote: ["sarcelle", "mise de côté pour toi"], ignoree: ["", "ignorée"], erreur: ["rouge", "erreur"] };
+
+async function vueEnvoisAuto(v) {
+  const [rows, env, params] = await Promise.all([api("candidatures-auto"), api("envoi").catch(() => ({})), api("parametres")]);
+  const seuil = (params.seuils || {}).fabrication ?? 85, mini = (params.seuils || {}).envoi_auto_min ?? 50;
+  const cote = rows.filter((r) => r.statut === "mise_de_cote"), autres = rows.filter((r) => r.statut !== "mise_de_cote");
+  const pieces = (r) => (r.fichiers || []).filter((f) => f.format === "pdf")
+    .map((f) => `<button class="bouton petit" data-telecharger="fichiers/${f.id}">${f.type === "cv" ? "CV" : "LM"} (PDF)</button>`).join(" ");
+  v.innerHTML = `<div class="entete"><div><h1>Candidatures automatiques.</h1>
+      <p>Pour chaque offre notée entre ${mini} et ${seuil - 1} sans contrainte violée : CV et lettre adaptés, mail jovial et pro avec ton portfolio,
+      envoyé automatiquement au contact publié par l'employeur (${env.plafond_auto ?? 10} par jour au plus, jamais deux fois le même employeur en 3 mois).
+      À partir de ${seuil}, ou sans contact fiable, tout est préparé et <strong>mis de côté pour toi</strong>, sans envoi.</p></div></div>
+    <div class="carte"><h3>Envoi automatique</h3>${env.autorise
+      ? `<label class="actions"><input type="checkbox" id="auto-actif" ${env.auto ? "checked" : ""}>
+          <span>${env.auto ? `Activé : envoi depuis <strong>${esc(env.adresse)}</strong> — ${env.auto_aujourdhui}/${env.plafond_auto} aujourd'hui`
+            : "Désactivé : rien ne part tout seul (les dossiers ne sont pas préparés)"}</span></label>`
+      : '<p class="note">Autorise d\'abord l\'envoi sur le PC : <code>python -m app.envoi --autoriser</code>.</p>'}</div>
+    <div class="section">${cote.length ? `<h3>Mises de côté pour toi (${cote.length})</h3>` + cote.map((r) => `<div class="carte" data-id="${r.id}">
+        <h3>${esc(r.entreprise || "?")} — ${esc(r.intitule)} <span class="note">${r.score != null ? Math.round(r.score) + "/100" : ""}</span></h3>
+        <p class="note">${esc(r.motif || "")}${r.destinataire ? ` · contact : <strong>${esc(r.destinataire)}</strong>` : ""}
+          ${lienSur(r.url_fiche || r.url_cle) ? ` · <a href="${lienSur(r.url_fiche || r.url_cle)}" target="_blank" rel="noopener">voir l'offre</a>` : ""}</p>
+        <div class="formulaire"><label>Objet<input class="champ" data-champ="objet" value="${esc(r.objet || "")}"></label>
+          <label>Message<textarea class="champ" data-champ="corps" rows="12">${esc(r.corps || "")}</textarea></label></div>
+        <div class="actions section">
+          ${r.destinataire && env.actif ? '<button class="bouton principal" data-a="envoyer">Envoyer depuis Gmail</button>' : ""}
+          ${r.destinataire ? `<a class="bouton" data-mailto="${esc(r.destinataire)}">Ouvrir dans ma messagerie</a>` : ""}
+          <button class="bouton petit" data-a="copier">Copier le texte</button> ${pieces(r)}
+          <button class="bouton petit" data-a="ignorer">Ignorer</button></div></div>`).join("")
+      : '<div class="carte vide">Rien de mis de côté pour l\'instant.</div>'}</div>
+    ${autres.length ? `<div class="carte section"><h3>Historique</h3><ul class="fil">${autres.map((r) => `<li><div>
+      <span class="etiquette ${STATUT_AUTO[r.statut]?.[0] ?? ""}">${esc(STATUT_AUTO[r.statut]?.[1] ?? r.statut)}</span>
+      <strong>${esc(r.entreprise || "?")}</strong> ${esc(r.intitule)} <span class="note">${r.score != null ? Math.round(r.score) + "/100" : ""}</span>
+      <div class="sous">${jour(r.envoyee_le || r.cree_le)}${r.destinataire ? ` · ${esc(r.destinataire)}` : ""}${r.erreur ? ` · ${esc(r.erreur.slice(0, 120))}` : ""}</div></div></li>`).join("")}</ul></div>` : ""}`;
+  const valeurs = (carte) => ({ objet: $("[data-champ=objet]", carte).value, corps: $("[data-champ=corps]", carte).value });
+  v.querySelectorAll("[data-mailto]").forEach((a) => {
+    const carte = a.closest("[data-id]");
+    const maj = () => { const m = valeurs(carte);
+      a.href = `mailto:${encodeURIComponent(a.dataset.mailto)}?subject=${encodeURIComponent(m.objet)}&body=${encodeURIComponent(m.corps)}`; };
+    maj(); carte.addEventListener("input", maj);
+  });
+  $("#auto-actif")?.addEventListener("change", async (e) => {
+    if (e.target.checked && !confirm("Activer l'envoi AUTOMATIQUE de candidatures à ton nom, sans relecture ?")) { e.target.checked = false; return; }
+    try { await envoyer("envoi", "PUT", { actif: e.target.checked, cle: "auto" }); toast(e.target.checked ? "Candidatures automatiques activées." : "Désactivées."); router(); }
+    catch (err) { toast(err.message); e.target.checked = !e.target.checked; }
+  });
+  v.onclick = async (e) => {
+    const b = e.target.closest("[data-a]");
+    if (!b) return;
+    const carte = b.closest("[data-id]"), id = carte.dataset.id, a = b.dataset.a;
+    try {
+      if (a === "copier") { const m = valeurs(carte); await navigator.clipboard.writeText(`${m.objet}\n\n${m.corps}`); toast("Texte copié."); return; }
+      if (a === "envoyer") {
+        if (!confirm("Envoyer cette candidature maintenant, avec le CV et la lettre adaptés ?")) return;
+        b.disabled = true; toast("Envoi en cours…");
+        await envoyer(`candidatures-auto/${id}/envoyer`, "POST", valeurs(carte)); toast("Candidature envoyée et ajoutée au suivi.");
+      } else { await envoyer(`candidatures-auto/${id}/ignorer`, "POST"); toast("Ignorée."); }
+      router();
+    } catch (err) { toast(err.message); b.disabled = false; }
   };
 }
 
@@ -1050,7 +1114,7 @@ sudo tailscale set --operator=$USER</pre></li>
 
 // --- Navigation ---------------------------------------------------------------------------------
 const VUES = { telephone: vueTelephone, tableau: vueTableau, pipeline: vuePipeline, veille: vueVeille, offres: vueOffres, candidatures: vueCandidatures, reponses: vueReponses,
-  documents: vueDocuments, salon: vueSalon, rapport: vueRapport, spontanees: vueSpontanees };
+  documents: vueDocuments, salon: vueSalon, rapport: vueRapport, spontanees: vueSpontanees, auto: vueEnvoisAuto };
 
 async function majBadge() {
   try {

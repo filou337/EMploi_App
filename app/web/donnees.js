@@ -91,20 +91,30 @@ const ROUTES = [
     const p = Object.fromEntries(verifier(await sb.from("parametres").select("cle, valeur").in("cle", ["envoi", "seuils"])).map((r) => [r.cle, r.valeur]));
     const e = p.envoi || {}, debut = new Date(); debut.setHours(0, 0, 0, 0);
     const { count } = await sb.from("envois").select("id", { count: "exact", head: true }).eq("statut", "envoye").gte("cree_le", debut.toISOString());
+    const { count: auto } = await sb.from("envois").select("id", { count: "exact", head: true }).eq("statut", "envoye").eq("automatique", true).gte("cree_le", debut.toISOString());
     return { autorise: Boolean(e.autorise_pour), adresse: e.autorise_pour || null, actif: Boolean(e.actif),
-      envoyes_aujourdhui: count || 0, plafond: (p.seuils || {}).envois_par_jour ?? 10 };
+      envoyes_aujourdhui: (count || 0) - (auto || 0), plafond: (p.seuils || {}).envois_par_jour ?? 10,
+      auto: Boolean(e.auto), auto_aujourdhui: auto || 0, plafond_auto: (p.seuils || {}).envois_auto_par_jour ?? 10 };
   }],
   ["PUT", /^envoi$/, async (_m, _q, o) => {
     const actuel = verifier(await sb.from("parametres").select("valeur").eq("cle", "envoi").maybeSingle())?.valeur || {};
-    const actif = Boolean(corps(o).actif);
+    const b = corps(o), actif = Boolean(b.actif), cle = b.cle === "auto" ? "auto" : "actif";
     if (actif && !actuel.autorise_pour) throw new ErreurDonnees("Autorise d'abord l'envoi sur le PC : python -m app.envoi --autoriser");
-    verifier(await sb.from("parametres").upsert({ cle: "envoi", valeur: { ...actuel, actif } }));
+    verifier(await sb.from("parametres").upsert({ cle: "envoi", valeur: { ...actuel, [cle]: actif } }));
     return apiSupabase("envoi");
   }],
   ["POST", /^spontanees\/(\d+)\/envoyer$/, async (m, _q, o) =>
     attendreDemande(await deposerDemande("envoyer_mail", { type: "spontanee", id: +m[1], ...corps(o) }))],
   ["POST", /^candidatures\/(\d+)\/envoyer-relance$/, async (m, _q, o) =>
     attendreDemande(await deposerDemande("envoyer_mail", { type: "relance", id: +m[1], ...corps(o) }))],
+  ["GET", /^candidatures-auto$/, async () => verifier(await sb.from("v_candidatures_auto").select("*")
+    .order("cree_le", { ascending: false }).limit(100))],
+  ["POST", /^candidatures-auto\/(\d+)\/envoyer$/, async (m, _q, o) =>
+    attendreDemande(await deposerDemande("envoyer_mail", { type: "candidature", id: +m[1], ...corps(o) }))],
+  ["POST", /^candidatures-auto\/(\d+)\/ignorer$/, async (m) => {
+    verifier(await sb.from("candidatures_auto").update({ statut: "ignoree" }).eq("id", m[1]).in("statut", ["pret", "mise_de_cote"]));
+    return { ok: true };
+  }],
   ["GET", /^rapports$/, async () => verifier(await sb.from("rapports").select("*").order("cree_le", { ascending: false }).limit(10))],
   ["GET", /^journal$/, async () => verifier(await sb.from("v_journal").select("*").order("debut", { ascending: false }).limit(50))],
 

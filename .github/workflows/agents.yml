@@ -1,0 +1,78 @@
+# Passage des agents toutes les 30 minutes, PC éteint : collecte Gmail, suivi, validité, fiches,
+# veille, matching, candidatures automatiques, spontanées, rapport ; puis les demandes de l'appli.
+# Les données vivent dans Supabase. Les clés et jetons sont des « Secrets » GitHub chiffrés
+# (outils/configurer_github.sh). DÉPÔT PUBLIC : rien de personnel n'est affiché dans ces journaux,
+# le détail de chaque passage est dans l'appli (onglet Salon).
+name: Agents EMploi_App
+
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: agents
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  passage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Installation
+        run: pip install -q -e .
+
+      - name: Configuration (secrets)
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_MODELE: ${{ secrets.GEMINI_MODELE }}
+          GMAIL_BOITES: ${{ secrets.GMAIL_BOITES }}
+          ADZUNA_APP_ID: ${{ secrets.ADZUNA_APP_ID }}
+          ADZUNA_APP_KEY: ${{ secrets.ADZUNA_APP_KEY }}
+          CLIENT_SECRET_B64: ${{ secrets.GOOGLE_CLIENT_SECRET_B64 }}
+          TOKEN_PRINCIPALE_B64: ${{ secrets.GMAIL_TOKEN_PRINCIPALE_B64 }}
+          TOKEN_ANCIENNE_B64: ${{ secrets.GMAIL_TOKEN_ANCIENNE_B64 }}
+          TOKEN_ENVOI_B64: ${{ secrets.GMAIL_TOKEN_ENVOI_B64 }}
+          PROFIL_B64: ${{ secrets.PROFIL_YAML_B64 }}
+        run: |
+          umask 077
+          mkdir -p secrets profil
+          ecrire() { [ -n "$1" ] && printf '%s' "$1" | base64 -d > "$2" || true; }
+          ecrire "$CLIENT_SECRET_B64" secrets/client_secret.json
+          ecrire "$TOKEN_PRINCIPALE_B64" secrets/token.json
+          ecrire "$TOKEN_ANCIENNE_B64" secrets/token_ancienne.json
+          ecrire "$TOKEN_ENVOI_B64" secrets/token_envoi.json
+          ecrire "$PROFIL_B64" profil/competences.yaml
+          {
+            echo "DATABASE_URL=$DATABASE_URL"
+            echo "GEMINI_API_KEY=$GEMINI_API_KEY"
+            echo "GEMINI_MODELE=$GEMINI_MODELE"
+            echo "GMAIL_BOITES=${GMAIL_BOITES:-principale}"
+            echo "ADZUNA_APP_ID=$ADZUNA_APP_ID"
+            echo "ADZUNA_APP_KEY=$ADZUNA_APP_KEY"
+          } > .env
+
+      - name: Passage des agents
+        run: |
+          if python -m app.orchestrateur > /tmp/agents.log 2>&1; then
+            echo "Passage terminé (détail dans l'appli, onglet Salon)."
+          else
+            echo "Passage en échec : détail dans l'appli (onglet Salon)."; exit 1
+          fi
+
+      - name: Demandes de l'appli (téléphone)
+        if: always()
+        run: |
+          timeout 600 python -m app.travailleur --une-fois > /tmp/travailleur.log 2>&1 \
+            && echo "Demandes traitées." || echo "Demandes : rien ou échec (détail dans l'appli)."

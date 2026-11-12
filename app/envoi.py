@@ -128,24 +128,32 @@ def etat(conn: psycopg.Connection) -> dict:
     p = criteres.lire(conn)
     e, s = p["envoi"], p["seuils"]
     jour = conn.execute(
-        "SELECT count(*) AS n FROM envois WHERE cree_le::date = current_date AND statut = 'envoye'"
-    ).fetchone()["n"]
+        "SELECT count(*) FILTER (WHERE NOT automatique) AS manuels,"
+        " count(*) FILTER (WHERE automatique) AS auto FROM envois"
+        " WHERE cree_le::date = current_date AND statut = 'envoye'"
+    ).fetchone()
     return {
         "autorise": bool(e.get("autorise_pour")) and chemin_jeton().exists(),
         "adresse": e.get("autorise_pour"),
         "actif": bool(e.get("actif")),
-        "envoyes_aujourdhui": jour,
+        "envoyes_aujourdhui": jour["manuels"],
         "plafond": int(s.get("envois_par_jour", 10)),
+        "auto": bool(e.get("auto")),
+        "auto_aujourdhui": jour["auto"],
+        "plafond_auto": int(s.get("envois_auto_par_jour", 10)),
     }
 
 
-def activer(conn: psycopg.Connection, actif: bool) -> dict:
+def activer(conn: psycopg.Connection, actif: bool, cle: str = "actif") -> dict:
+    """`cle` = « actif » (envoi en 1 clic) ou « auto » (candidatures automatiques)."""
+    if cle not in ("actif", "auto"):
+        raise EnvoiImpossible("Réglage inconnu.")
     params = criteres.lire(conn)["envoi"]
     if actif and not params.get("autorise_pour"):
         raise EnvoiImpossible(
             "Autorise d'abord l'envoi sur le PC : python -m app.envoi --autoriser"
         )
-    criteres.ecrire(conn, "envoi", {**params, "actif": bool(actif)})
+    criteres.ecrire(conn, "envoi", {**params, cle: bool(actif)})
     return etat(conn)
 
 
@@ -174,18 +182,26 @@ def _pieces_jointes(conn: psycopg.Connection) -> list[dict]:
     ).fetchall()
 
 
-def _controles(conn: psycopg.Connection, destinataire: str | None) -> dict:
+def _controles(conn: psycopg.Connection, destinataire: str | None, auto: bool = False) -> dict:
     e = etat(conn)
     if not e["autorise"]:
         raise EnvoiImpossible(
             "Envoi non autorisé : lance `python -m app.envoi --autoriser` sur le PC."
         )
-    if not e["actif"]:
-        raise EnvoiImpossible(
-            "L'envoi depuis Gmail est désactivé (interrupteur de l'onglet Spontanées)."
-        )
-    if e["envoyes_aujourdhui"] >= e["plafond"]:
-        raise EnvoiImpossible(f"Plafond de {e['plafond']} envois par jour atteint.")
+    if auto:
+        if not e["auto"]:
+            raise EnvoiImpossible("Les candidatures automatiques sont désactivées.")
+        if e["auto_aujourdhui"] >= e["plafond_auto"]:
+            raise EnvoiImpossible(
+                f"Plafond de {e['plafond_auto']} envois automatiques par jour atteint."
+            )
+    else:
+        if not e["actif"]:
+            raise EnvoiImpossible(
+                "L'envoi depuis Gmail est désactivé (interrupteur de l'onglet Spontanées)."
+            )
+        if e["envoyes_aujourdhui"] >= e["plafond"]:
+            raise EnvoiImpossible(f"Plafond de {e['plafond']} envois par jour atteint.")
     if not destinataire or not _EMAIL.fullmatch(destinataire.strip()):
         raise EnvoiImpossible("Adresse du destinataire absente ou invalide.")
     return e
@@ -201,18 +217,19 @@ def _envoyer(
     corps: str,
     pieces: list[dict],
     fil: str | None = None,
+    auto: bool = False,
 ) -> dict:
     from app.generation import identite
 
-    e = _controles(conn, destinataire)
+    e = _controles(conn, destinataire, auto)
     if not objet.strip() or not corps.strip():
         raise EnvoiImpossible("Objet ou message vide.")
     try:
         with conn.transaction():
             envoi_id = conn.execute(
-                "INSERT INTO envois (type, ref_id, numero, destinataire, objet) VALUES (%s, %s, %s, %s, %s)"
-                " RETURNING id",
-                (type_, ref_id, numero, destinataire, objet),
+                "INSERT INTO envois (type, ref_id, numero, destinataire, objet, automatique)"
+                " VALUES (%s, %s, %s, %s, %s, %s) RETURNING id",
+                (type_, ref_id, numero, destinataire, objet, auto),
             ).fetchone()["id"]
     except psycopg.errors.UniqueViolation as err:
         raise EnvoiImpossible("Ce mail a déjà été envoyé (ou est en cours d'envoi).") from err
@@ -290,6 +307,82 @@ def envoyer_relance(conn: psycopg.Connection, cid: int, objet: str, corps: str) 
     r = _envoyer(conn, "relance", cid, rel["numero"], rel["contact_email"], objet, corps, [], fil)
     conn.execute("SELECT marquer_relance(%s)", (cid,))
     return {**r, "numero": rel["numero"]}
+
+
+def envoyer_candidature(
+    conn: psycopg.Connection,
+    ca_id: int,
+    objet: str | None = None,
+    corps: str | None = None,
+    auto: bool = False,
+) -> dict:
+    """Envoie une candidature préparée (CV + LM adaptés joints) ; l'offre passe « Envoyée »."""
+    ca = conn.execute(
+        "SELECT a.*, o.entreprise_id, o.intitule FROM candidatures_auto a"
+        " JOIN offres o ON o.id = a.offre_id WHERE a.id = %s",
+        (ca_id,),
+    ).fetchone()
+    if ca is None:
+        raise EnvoiImpossible("Candidature préparée introuvable.")
+    if ca["statut"] not in ("pret", "mise_de_cote"):
+        raise EnvoiImpossible("Cette candidature n'est plus à envoyer.")
+    objet, corps = (objet or ca["objet"] or "").strip(), (corps or ca["corps"] or "").strip()
+    opposee = conn.execute(
+        "SELECT 1 FROM contacts WHERE lower(email) = lower(%s) AND opposition",
+        (ca["destinataire"] or "",),
+    ).fetchone()
+    if opposee:
+        raise EnvoiImpossible("Ce contact a demandé à ne plus être sollicité.")
+    pieces = conn.execute(
+        "SELECT nom AS nom_fichier, contenu FROM dossier_fichiers WHERE fabrication_id = %s"
+        " AND format = 'pdf' ORDER BY type",
+        (ca["fabrication_id"],),
+    ).fetchall()
+    if not pieces:
+        raise EnvoiImpossible("CV et LM adaptés introuvables pour cette offre.")
+    conn.execute(
+        "UPDATE candidatures_auto SET objet = %s, corps = %s WHERE id = %s", (objet, corps, ca_id)
+    )
+    conn.commit()
+    r = _envoyer(
+        conn, "candidature", ca["offre_id"], 1, ca["destinataire"], objet, corps, pieces, None, auto
+    )
+    cid = conn.execute(
+        """
+        INSERT INTO candidatures (offre_id, entreprise_id, type, statut, postule_le, origine, poste,
+                                  canal, boite, gmail_message_id, gmail_thread_id, contact_email)
+        VALUES (%s, %s, 'offre', 'postule', current_date, 'agent', %s, 'gmail', %s, %s, %s, %s)
+        ON CONFLICT (offre_id) DO UPDATE SET statut = 'postule', postule_le = current_date
+        RETURNING id
+        """,
+        (
+            ca["offre_id"],
+            ca["entreprise_id"],
+            ca["intitule"],
+            boite_envoi(),
+            r["gmail_message_id"],
+            r["thread_id"],
+            ca["destinataire"],
+        ),
+    ).fetchone()["id"]
+    conn.execute(
+        "UPDATE candidatures_auto SET statut = 'envoyee', envoyee_le = now(), envoi_id = %s,"
+        " candidature_id = %s, motif = NULL WHERE id = %s",
+        (r["envoi_id"], cid, ca_id),
+    )
+    conn.execute(
+        "UPDATE offres SET etape = 'envoyee', etape_maj_le = now() WHERE id = %s", (ca["offre_id"],)
+    )
+    conn.execute(
+        "UPDATE entreprises SET derniere_candidature = GREATEST(derniere_candidature, current_date)"
+        " WHERE id = %s",
+        (ca["entreprise_id"],),
+    )
+    conn.execute(
+        "UPDATE contacts SET contacte_le = current_date WHERE lower(email) = lower(%s)",
+        (ca["destinataire"],),
+    )
+    return {**r, "candidature_id": cid}
 
 
 def main() -> None:

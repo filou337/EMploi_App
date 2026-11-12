@@ -4,7 +4,7 @@ Outil personnel de recherche d'emploi pour des postes **Data Analyst**, **Data E
 
 Il repère chaque nouvelle offre pertinente dès son arrivée dans Gmail, vérifie qu'elle est encore ouverte, écarte les doublons, la note sur 100 face à mon profil, puis prépare un dossier de candidature complet (fiche de poste, CV ATS adapté, lettre de motivation). Il suit ensuite les réponses jusqu'à l'entretien.
 
-> **Règle de conduite : aucun envoi automatique.** L'outil prépare des dossiers et des brouillons. C'est moi qui clique sur « Postuler » ; les mails partent depuis ma messagerie, ou en 1 clic depuis Gmail si je l'ai activé (jamais sans mon clic).
+> **Règle de conduite.** Sous le seuil de 85, et si je l'active, l'outil postule seul par mail : CV + LM adaptés et mail d'accompagnement au contact publié par l'employeur, 10 par jour au plus. À partir de 85, ou sans contact fiable, tout est préparé et **mis de côté** : c'est moi qui envoie. Aucun formulaire n'est jamais rempli à ma place.
 
 **Statut :** étapes 1, 2, 4, 5 et 6 terminées (collecte sur deux boîtes Gmail, validité, dossiers CV + LM, suivi et relances, spontanées, rapport) ; étape 3 en calibrage. Données suivies depuis le 1er octobre 2026 : seules les offres, candidatures et réponses récentes sont gardées.
 
@@ -54,6 +54,8 @@ s'appliquent, puis le tableau de bord s'ouvre sur http://127.0.0.1:8765 (accessi
 Raccourci de bureau : `sed "s#/chemin/vers/EMploi_App#$PWD#" outils/EMploi_App.desktop > ~/.local/share/applications/EMploi_App.desktop`, ou dans Chrome
 ⋮ → *Installer EMploi_App* (appli installable, PWA).
 
+**24 h/24 (GitHub Actions)** : `.github/workflows/agents.yml` fait un passage complet toutes les 30 minutes sur les serveurs de GitHub, PC éteint, puis traite les demandes de l'appli. Les clés, jetons et le profil sont des Secrets chiffrés (`outils/configurer_github.sh`, à relancer après chaque nouvelle autorisation Gmail). Dépôt public : les journaux GitHub n'affichent rien de personnel, le détail est dans l'onglet Salon.
+
 **En ligne (téléphone, PC éteint)** : l'interface est publiée sur GitHub Pages et lit les données dans
 Supabase (gratuit), protégées par ton compte et des règles RLS (`sql/supabase/securite.sql`). Le PC garde
 l'accès Gmail, les clés et les agents ; ce qui demande du Python (ATS, matching, dépôt de CV, Excel) passe
@@ -90,6 +92,8 @@ Commandes utiles :
 | `python -m app.scoring --rescorer` | Recalcule la grille V2 (score, classe A/B/C) des offres déjà analysées, sans appel LLM |
 | `python -m app.scoring --exporter-calibrage` puis `--calibrer` | Exporte 20 offres à noter dans `profil/calibrage.csv`, puis propose les poids qui collent le mieux à tes notes |
 | `python -m app.spontanees.agent --entreprise "Acme" --site acme.fr` | Prépare une candidature spontanée (sans option : les brouillons du jour pour les entreprises de ta veille) ; `--email` si tu connais l'adresse |
+| `python -m app.agents.candidature_auto` | Candidatures automatiques : dossier + mail pour les offres notées, envoi sous le seuil, mise de côté au-dessus (interrupteur onglet « Envois auto ») |
+| `outils/configurer_github.sh` | Envoie la configuration (Supabase, Gemini, jetons Gmail, profil) dans les Secrets GitHub pour le passage 24 h/24 (`-n` : essai) |
 | `python -m app.envoi --autoriser` | Autorise l'envoi en 1 clic depuis Gmail (boîte de ton CV, droit d'envoi seul) ; `--etat` pour vérifier |
 | `python -m app.rapport` | Rapport des 3 derniers jours (produit par l'orchestrateur quand il est dû ; `--forcer` pour l'avoir tout de suite) |
 | `python -m app.migrations` | Applique les migrations de `sql/migrations/` (à lancer après chaque mise à jour du code) |
@@ -208,7 +212,8 @@ Moyenne pondérée sur 100, avec une justification obligatoire pour chaque crit�
 
 ## Garde-fous
 
-- **Envoi sur ton clic seulement** : aucun remplissage automatique de formulaire. L'envoi depuis Gmail (spontanées, relances) est désactivé par défaut ; une fois autorisé (`python -m app.envoi --autoriser`, droit `gmail.send` dans un jeton séparé, compte vérifié) et activé, chaque mail part uniquement quand tu cliques « Envoyer », 10 par jour au plus, jamais deux fois, journalisé dans `envois`.
+- **Candidatures automatiques encadrées** : interrupteur désactivé par défaut ; seulement des offres à fiche complète, valides, notées entre `envoi_auto_min` (50) et le seuil (85), sans contrainte violée (contrat, lieu, séniorité, secteur exclu) ; jamais deux fois le même employeur en 3 mois ; contact publié par l'employeur uniquement (fiche de l'offre, contact connu, adresse de recrutement du site), jamais d'adresse devinée ; dossier ATS friendly obligatoire ; 10 envois automatiques par jour ; mail relu par le garde-fou de véracité ; tout est journalisé (`envois`, `candidatures_auto`).
+- **Envoi sur ton clic pour le reste** : aucun remplissage automatique de formulaire. L'envoi depuis Gmail (spontanées, relances) est désactivé par défaut ; une fois autorisé (`python -m app.envoi --autoriser`, droit `gmail.send` dans un jeton séparé, compte vérifié) et activé, chaque mail part uniquement quand tu cliques « Envoyer », 10 par jour au plus, jamais deux fois, journalisé dans `envois`.
 - **Véracité du CV** : aucune compétence hors de `competences.yaml`. Un contrôle dans le code fait échouer la génération sinon.
 - **Respect des sites** : lecture des mails d'alerte et des pages publiques à faible cadence. Pas d'aspiration de LinkedIn ni de connexion automatisée aux plateformes.
 - **RGPD** : contacts limités aux adresses publiques liées au recrutement (jamais une adresse nominative), source enregistrée, robots.txt respecté, 5 spontanées par jour au maximum, jamais deux fois la même entreprise en 90 jours, droit d'opposition définitif (bouton « Opposition »).
@@ -229,7 +234,7 @@ Sept étapes d'environ une semaine chacune. Chacune livre quelque chose d'utilis
 - [x] **4. Génération** : moteur ATS ✅ (compatibilité, qualité, matching), agent Dossier ✅ (CV + LM adaptés dans la langue de l'offre, PDF + DOCX, garde-fou de véracité, relecture ATS, « ATS friendly » si compat ≥ 90 et matching ≥ CV d'origine), validation → « À envoyer » ✅ ; dépôt Drive remplacé par la base (téléchargement depuis le téléphone) et `Candidatures/`
 - [x] **5. Alertes et suivi** : agent Veille ✅, agent Matching ✅, agent Suivi ✅ (réponses, accusés : l'offre passe « Envoyée » toute seule), relances J+7 / J+14 ✅ (texte prêt, envoi par toi depuis ta messagerie), « sans suite » à 30 jours ✅, orchestrateur + timer ✅, pipeline 6 étapes ✅, notifications appli + bureau ✅. Détails d'origine : alertes mail, bouton « J'ai postulé », relances J+7, orchestrateur qui valide la candidature à la réception de l'accusé
 - [ ] **6. Spontanées et rapport** : rapport tous les 3 jours ✅ (onglet « Rapport » + notification, pas de mail : Gmail reste en lecture seule), spontanées ✅ (contact RH public trouvé sur le site, mail rédigé et vérifié, 5 par jour au plus ; brouillon dans l'onglet « Spontanées », envoyé par toi depuis ta messagerie). Déjà disponibles en avance : dashboard web ✅, salon v0 (journal des agents) ✅, export Excel ✅, import / saisie des candidatures déjà faites ✅, dépôt CV + LM ✅
-- [ ] **7. Temps réel** : déploiement Cloud Run, `users.watch` + Pub/Sub
+- [ ] **7. Temps réel** : passage 24 h/24 toutes les 30 min sur GitHub Actions ✅ ; reste `users.watch` + Pub/Sub pour réagir à la minute (optionnel)
 
 ---
 
@@ -265,14 +270,14 @@ EMploi_App/
 │   ├── ats/                # compatibilite.py (score ATS local), moteur.py (lecture, qualité, matching),
 │   │                       # anonymisation.py (coordonnées masquées), service.py
 │   ├── llm.py              # client Gemini (sortie JSON contrainte, reprise, modèle de secours)
-│   ├── agents/             # veille.py (sites carrières des entreprises suivies), matching.py (qualification)
+│   ├── agents/             # veille.py, matching.py, suivi.py, candidature_auto.py (dossier + mail, envoi ou mise de côté)
 │   ├── generation/         # agent Dossier : identite.py (coordonnées, masquage), adaptation.py (Gemini),
 │   │                       # verite.py (garde-fou), rendu.py (HTML -> PDF via Chrome, DOCX), fabrique.py
 │   ├── orchestrateur.py    # enchaîne les agents, verrou anti-doublon, notifications de bureau
 │   ├── criteres.py         # critères de veille et seuils (modifiables dans l'appli)
 │   ├── scoring.py          # grille V2 sur 100, classes A/B/C, calibrage des poids
 │   ├── rapport.py          # rapport tous les 3 jours (table rapports, onglet Rapport)
-│   ├── envoi.py            # envoi en 1 clic depuis Gmail (gmail.send, interrupteur, plafond, journal)
+│   ├── envoi.py            # envoi depuis Gmail : 1 clic ou automatique (gmail.send, interrupteurs, plafonds, journal)
 │   ├── spontanees/         # contacts.py (adresse RH publique, robots.txt), agent.py (brouillons)
 │   ├── dossiers.py         # dossier local du poste (Candidatures/…/offre.txt)
 │   ├── notifications.py

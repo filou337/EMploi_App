@@ -799,6 +799,7 @@ def opposition_spontanee(sid: int, conn: Conn = Depends(db)):
 # --- Envoi en 1 clic depuis Gmail (toujours sur ton clic) -----------------------------------
 class Interrupteur(BaseModel):
     actif: bool
+    cle: Literal["actif", "auto"] = "actif"
 
 
 class MailAEnvoyer(BaseModel):
@@ -822,7 +823,28 @@ def etat_envoi(conn: Conn = Depends(db)):
 
 @app.put("/api/envoi")
 def interrupteur_envoi(i: Interrupteur, conn: Conn = Depends(db)):
-    return _envoi(lambda e: e.activer(conn, i.actif))
+    return _envoi(lambda e: e.activer(conn, i.actif, i.cle))
+
+
+@app.get("/api/candidatures-auto")
+def candidatures_auto(conn: Conn = Depends(db)):
+    return conn.execute(
+        "SELECT * FROM v_candidatures_auto ORDER BY (statut = 'mise_de_cote') DESC, cree_le DESC LIMIT 100"
+    ).fetchall()
+
+
+@app.post("/api/candidatures-auto/{aid}/envoyer")
+def envoyer_candidature_auto(aid: int, m: MailAEnvoyer, conn: Conn = Depends(db)):
+    return _envoi(lambda e: e.envoyer_candidature(conn, aid, m.objet, m.corps))
+
+
+@app.post("/api/candidatures-auto/{aid}/ignorer")
+def ignorer_candidature_auto(aid: int, conn: Conn = Depends(db)):
+    conn.execute(
+        "UPDATE candidatures_auto SET statut = 'ignoree' WHERE id = %s AND statut IN ('pret', 'mise_de_cote')",
+        (aid,),
+    )
+    return {"ok": True}
 
 
 @app.post("/api/spontanees/{sid}/envoyer")

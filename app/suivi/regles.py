@@ -286,7 +286,10 @@ def entreprise_du_mail(expediteur: str, sujet: str, texte: str) -> str | None:
     """
     nom_affiche, adresse = parseaddr(expediteur)
     if not adresse and (m := re.match(r"^\s*(.*?)\s*<([^<>@\s]+@[^<>\s]+)>\s*$", expediteur or "")):
-        nom_affiche, adresse = m.group(1).strip('"'), m.group(2)  # « Acme @ icims <…> » sans guillemets
+        nom_affiche, adresse = (
+            m.group(1).strip('"'),
+            m.group(2),
+        )  # « Acme @ icims <…> » sans guillemets
     domaine = adresse.rpartition("@")[2].lower()
     ats = est_generique_ou_ats(domaine) or domaine.endswith("teamtailor-mail.com")
     sujet_ent = (m := _SUJET_ENTREPRISE.search(sujet)) and _propre(next(g for g in m.groups() if g))
