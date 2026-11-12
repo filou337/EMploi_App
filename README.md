@@ -6,7 +6,7 @@ Il repère chaque nouvelle offre pertinente dès son arrivée dans Gmail, vérif
 
 > **Règle de conduite : aucun envoi automatique.** L'outil prépare des dossiers et des brouillons. C'est moi qui clique sur « Postuler » ; les mails partent depuis ma messagerie, ou en 1 clic depuis Gmail si je l'ai activé (jamais sans mon clic).
 
-**Statut :** étape 1 terminée (LinkedIn, Indeed). Étape 2 presque terminée : doublons, fraîcheur, candidatures passées et recherche de la fiche chez l'employeur (ATS publics) en place ; reste la seconde boîte Gmail et les clés Adzuna.
+**Statut :** étapes 1, 2, 4, 5 et 6 terminées (collecte sur deux boîtes Gmail, validité, dossiers CV + LM, suivi et relances, spontanées, rapport) ; étape 3 en calibrage. Données suivies depuis le 1er octobre 2026 : seules les offres, candidatures et réponses récentes sont gardées.
 
 ---
 
@@ -82,7 +82,7 @@ Commandes utiles :
 | `python -m app.collecte.echantillons --par-source 5` | Sauvegarde des mails bruts dans `echantillons/` (ignoré par git) pour tester les parseurs |
 | `python -m app.collecte.importer --jours 30` | Importe les offres des alertes dans Postgres (relançable sans doublon) |
 | `python -m app.validite` | Marque les doublons (même offre republiée, ≥ 90 %) et les offres de plus de 21 jours |
-| `python -m app.suivi.historique --mois 24` | Importe les candidatures passées depuis Gmail (envois, accusés, refus) ; `--refaire` rejoue l'import |
+| `python -m app.suivi.historique --jours 43` | Importe les candidatures depuis Gmail (envois, accusés, refus, entretiens) sur la période (`--mois` aussi) ; `--refaire` efface puis rejoue l'import de la boîte |
 | `python -m app.fiches` | Cherche la fiche complète de chaque offre data chez l'employeur (ATS publics, Adzuna si clés) ; `--limite`, `--entreprise`, `--refaire` |
 | ATS checker (dans l'appli) | Onglet « CV & lettre » : score ATS /100 (local) + qualité /100 (Gemini) ; détail d'une offre : matching /100 avec preuves vérifiées |
 | `python -m app.orchestrateur` | Un passage complet des agents : Recherche → Validité → Fiches → Veille → Matching → Spontanées → Rapport (`--sans-gmail`, `--etapes`) |
@@ -96,7 +96,7 @@ Commandes utiles :
 
 Gmail : plusieurs boîtes sont lues (`GMAIL_BOITES=principale,ancienne` dans `.env`, option `--boite` pour en choisir une). La première commande sur une boîte ouvre le navigateur pour autoriser l'accès en lecture seule ; le jeton est gardé dans `secrets/token.json` (principale) ou `secrets/token_<nom>.json`. Les appels refusés pour quota (429, 403) ou coupés par le réseau sont repris automatiquement.
 
-> Plus tard, pour passer sur Supabase, il suffira de remplacer `DATABASE_URL` dans `.env`.
+> La base de travail est Supabase (`DATABASE_URL`) ; la base Docker locale (`DATABASE_URL_LOCAL`) ne sert plus qu'aux tests (`pytest`).
 
 ---
 
@@ -201,6 +201,11 @@ Moyenne pondérée sur 100, avec une justification obligatoire pour chaque crit�
 
 ---
 
+**Lecture des mails** (`app/suivi/regles.py`) : chaque mail reçu est classé (accusé, refus, entretien, neutre, réponse automatique, non remis) et rattaché à sa candidature par son fil Gmail, ou par l'employeur quand l'objet parle de candidature.
+- L'employeur est retrouvé derrière les logiciels de recrutement (Workday, iCIMS, Talent-soft, profils.org, Hellowork…) : nom affiché, objet (« Recrutement X : »), ou adresse (`noreply.x@…`).
+- Un accusé qui évoque un refus au conditionnel (« sans retour sous 30 jours… ») reste un accusé ; seul un vrai refus (« malheureusement… ») ferme la candidature.
+- Les mails de vie étudiante (statut étudiant-entrepreneur, prix, concours, hackathons, appels à projets) sont ignorés : ce ne sont pas des candidatures.
+
 ## Garde-fous
 
 - **Envoi sur ton clic seulement** : aucun remplissage automatique de formulaire. L'envoi depuis Gmail (spontanées, relances) est désactivé par défaut ; une fois autorisé (`python -m app.envoi --autoriser`, droit `gmail.send` dans un jeton séparé, compte vérifié) et activé, chaque mail part uniquement quand tu cliques « Envoyer », 10 par jour au plus, jamais deux fois, journalisé dans `envois`.
@@ -219,7 +224,7 @@ Moyenne pondérée sur 100, avec une justification obligatoire pour chaque crit�
 Sept étapes d'environ une semaine chacune. Chacune livre quelque chose d'utilisable.
 
 - [x] **1. Collecte et base** : schéma Postgres ✅, parseurs LinkedIn, Indeed et WTTJ (sélections « jobs du mois ») ✅, import des 30 derniers jours ✅. France Travail, APEC, Jobrapido : parseurs à écrire dès réception d'alertes
-- [ ] **2. Validité et déduplication** : doublons flous ✅, fraîcheur 21 jours ✅, garde-fou 3 mois ✅, import des candidatures passées ✅ (boîte principale), fiche complète via Greenhouse, Lever, SmartRecruiters, Ashby, Recruitee ✅, Adzuna (connecteur prêt, clés à fournir), seconde boîte Gmail
+- [x] **2. Validité et déduplication** : doublons flous ✅, fraîcheur 21 jours ✅, garde-fou 3 mois ✅, import des candidatures ✅ (deux boîtes), fiche complète via Greenhouse, Lever, SmartRecruiters, Ashby, Recruitee ✅, Adzuna (connecteur prêt, facultatif)
 - [ ] **3. Scoring et calibrage** : `profil/competences.yaml` ✅, grille V2 sur 100 + classes A/B/C ✅ (`app/scoring.py`, branchée sur l'agent Matching), outil de calibrage ✅ ; reste à noter 20 offres et ajuster les poids
 - [x] **4. Génération** : moteur ATS ✅ (compatibilité, qualité, matching), agent Dossier ✅ (CV + LM adaptés dans la langue de l'offre, PDF + DOCX, garde-fou de véracité, relecture ATS, « ATS friendly » si compat ≥ 90 et matching ≥ CV d'origine), validation → « À envoyer » ✅ ; dépôt Drive remplacé par la base (téléchargement depuis le téléphone) et `Candidatures/`
 - [x] **5. Alertes et suivi** : agent Veille ✅, agent Matching ✅, agent Suivi ✅ (réponses, accusés : l'offre passe « Envoyée » toute seule), relances J+7 / J+14 ✅ (texte prêt, envoi par toi depuis ta messagerie), « sans suite » à 30 jours ✅, orchestrateur + timer ✅, pipeline 6 étapes ✅, notifications appli + bureau ✅. Détails d'origine : alertes mail, bouton « J'ai postulé », relances J+7, orchestrateur qui valide la candidature à la réception de l'accusé

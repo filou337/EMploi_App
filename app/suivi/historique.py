@@ -33,6 +33,7 @@ from app.suivi.regles import (
     AUTO,
     AUTRE,
     ENVOI,
+    HORS_EMPLOI,
     NON_REMIS,
     POSITIF,
     REFUS,
@@ -188,9 +189,20 @@ class Import:
         if lu.type == AUTO:
             self.stats["réponses automatiques ignorées"] += 1
             return
+        if m.get("envoi") and lu.type == AUTRE:
+            self.stats["mes propres réponses ignorées"] += (
+                1  # « Re: » envoyé par moi : pas une réponse
+            )
+            return
+        if lu.type == HORS_EMPLOI:
+            self.stats["mails hors emploi ignorés (vie étudiante, concours…)"] += 1
+            return
         trouvee = self._par_fil(m["thread"])
         eid = entreprise_id(self.conn, lu.entreprise) if lu.entreprise else None
-        if trouvee is None and eid is not None and lu.type != ENVOI:
+        # Un mail neutre n'est rattaché par l'entreprise que s'il parle de candidature : sinon
+        # tout le courrier d'un employeur (ou d'une école) finirait en « réponses ».
+        par_entreprise = lu.type != AUTRE or parle_de_candidature(m["Subject"])
+        if trouvee is None and eid is not None and lu.type != ENVOI and par_entreprise:
             # Un accusé d'ATS est une candidature à part, sauf s'il suit de près un envoi par mail.
             fenetre = timedelta(days=3) if lu.type == ACCUSE else RATTACHEMENT_MAX
             trouvee = self._par_entreprise(eid, m["date"], fenetre)
@@ -241,15 +253,18 @@ def effacer_import(conn: psycopg.Connection, boite: str) -> int:
     Ne touche qu'aux lignes issues d'un mail (gmail_message_id renseigné) : une candidature
     saisie à la main ou créée par l'outil reste en place.
     """
+    # Une réponse confirmée à la main (onglet « Réponses ») et sa candidature sont gardées :
+    # le nouvel import ne les recrée pas en double (même identifiant de mail).
     conn.execute(
-        "DELETE FROM reponses WHERE boite = %s OR candidature_id IN"
+        "DELETE FROM reponses WHERE confirme_le IS NULL AND (boite = %s OR candidature_id IN"
         " (SELECT id FROM candidatures WHERE boite = %s AND origine = 'manuelle'"
-        "  AND gmail_message_id IS NOT NULL)",
+        "  AND gmail_message_id IS NOT NULL))",
         (boite, boite),
     )
     return conn.execute(
-        "DELETE FROM candidatures WHERE boite = %s AND origine = 'manuelle'"
-        " AND gmail_message_id IS NOT NULL",
+        "DELETE FROM candidatures c WHERE boite = %s AND origine = 'manuelle'"
+        " AND gmail_message_id IS NOT NULL"
+        " AND NOT EXISTS (SELECT 1 FROM reponses r WHERE r.candidature_id = c.id)",
         (boite,),
     ).rowcount
 
@@ -317,12 +332,13 @@ def importer_boite(
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--mois", type=int, default=24)
+    p.add_argument("--jours", type=int, help="période en jours (prioritaire sur --mois)")
     p.add_argument("--boite", action="append", help="boîte à lire (défaut : GMAIL_BOITES)")
     p.add_argument("--refaire", action="store_true", help="efface l'import précédent de la boîte")
     args = p.parse_args()
     for boite in args.boite or boites_gmail():
         print(f"[{boite}]")
-        importer_boite(boite, args.mois, args.refaire)
+        importer_boite(boite, args.mois, args.refaire, args.jours)
 
 
 if __name__ == "__main__":

@@ -15,7 +15,7 @@ from app.texte import html_vers_texte
 
 # --- Type de mail -------------------------------------------------------------------------
 
-ENVOI, ACCUSE, REFUS, POSITIF, NON_REMIS, AUTO, AUTRE = (
+ENVOI, ACCUSE, REFUS, POSITIF, NON_REMIS, AUTO, AUTRE, HORS_EMPLOI = (
     "envoi",
     "accuse",
     "refus",
@@ -23,6 +23,7 @@ ENVOI, ACCUSE, REFUS, POSITIF, NON_REMIS, AUTO, AUTRE = (
     "non_remis",
     "auto",
     "autre",
+    "hors_emploi",
 )
 
 
@@ -66,6 +67,8 @@ _REFUS = _motifs(
     r"not (?:currently )?looking for",
     r"currently not looking",
     r"ne prends? pas de candidatures? spontan",
+    r"avons le regret",
+    r"ne (?:pouvons|donnons|donnerons) pas (?:donner )?suite",
 )
 # Formules qu'un accusé de réception emploie au conditionnel (« si votre candidature n'est
 # pas retenue… ») : elles ne font un refus que dans un mail qui n'est pas un accusé.
@@ -87,6 +90,8 @@ _POSITIF = _motifs(
     r"invite you (?:to|for) an? interview",
     r"lance une invitation",
     r"test technique",
+    r"invit[ée]\(?e?\)? [àa] passer (?:votre|un|une)",
+    r"entretien de pr[ée]qualification",
 )
 _ACCUSE = _motifs(
     r"bien re[çc]u (?:votre|ta) candidature",
@@ -97,6 +102,20 @@ _ACCUSE = _motifs(
     r"thanks? (?:you )?for (?:applying|your application)",
     r"received your application",
     r"(?:merci|remercions?) (?:pour|de) (?:votre|ta) candidature",
+)
+# Mails qui parlent de « candidature » sans rapport avec un emploi : vie étudiante
+# (statut étudiant-entrepreneur, prix, concours, hackathons, appels à projets).
+_HORS_EMPLOI = _motifs(
+    r"statut national (?:d.)?[ée]tudiant",
+    r"\bSNEE\b",
+    r"p[ée]pite",
+    r"appel [àa] (?:candidatures|projets)",
+    r"\bAAP\b",
+    r"hackathon",
+    r"concours de pitch",
+    r"\bprix (?:tremplin|p[ée]pite|de l.innovation|[ée]tudiant)",
+    r"projet tuteur[ée]",
+    r"comit[ée] d.engagement",
 )
 _SUJET_CANDIDATURE = _motifs(
     r"candidature", r"application", r"applying", r"applied", r"postul", r"entretien", r"interview"
@@ -109,6 +128,8 @@ def classer(sujet: str, texte: str, envoye_par_moi: bool) -> tuple[str, float]:
     `texte` est le corps sans la partie citée (voir `texte_utile`) : sinon une réponse
     reprenant ma candidature (« ... un entretien ... ») passerait pour une invitation.
     """
+    if _HORS_EMPLOI.search(sujet):
+        return HORS_EMPLOI, 0.95
     if envoye_par_moi:
         if re.match(r"\s*(re|tr|fwd?|réf)\s*:", sujet, re.IGNORECASE):
             return AUTRE, 1.0
@@ -118,10 +139,13 @@ def classer(sujet: str, texte: str, envoye_par_moi: bool) -> tuple[str, float]:
         return NON_REMIS, 0.95
     if _AUTO.search(sujet) or _AUTO.search(texte[:400]):
         return AUTO, 0.95
+    accuse = _ACCUSE.search(tout)
     if _REFUS.search(tout):
         fort = re.search(r"malheureusement|unfortunately", tout, re.IGNORECASE)
+        # « Sans retour sous 30 jours, considérez que nous ne pouvons donner suite » : accusé.
+        if accuse and not fort:
+            return ACCUSE, 0.85
         return REFUS, 0.9 if fort else 0.8
-    accuse = _ACCUSE.search(tout)
     if _REFUS_FAIBLE.search(tout) and not accuse:
         return REFUS, 0.7
     if _POSITIF.search(tout):
@@ -194,6 +218,17 @@ _PLATEFORMES = {
     "indeed",
 }
 _CHEZ = re.compile(rf"\b(?:chez|at)\s+{_NOM}{_FIN_NOM}")
+# « Recrutement Globex Assurances : Votre candidature… », « Votre candidature Initech - STAGE… »
+_SUJET_ENTREPRISE = re.compile(
+    rf"^(?:Recrutement|Recruitment)\s+{_NOM}\s*:|^Votre candidature\s+(?!pour|au|à|a |chez|-|–){_NOM}\s+[-–]"
+    r"|^\{([^}]{2,40}?)\s+RECRUTEMENT\}",
+    re.IGNORECASE,
+)
+# Adresse d'ATS qui porte l'employeur : noreply.acme@talent-soft.com, groupeglobex@profils.org
+_LOCAL_ROBOT = re.compile(
+    r"^(?:no-?reply|ne-?pas-?repondre|notifications?|donotreply|myhr-?noreply|auto-?reply|jobs?|careers?|rh|hr|recrutement|talents?)$",
+    re.IGNORECASE,
+)
 _INTERET = re.compile(
     rf"(?:int[ée]r[êe]t (?:que (?:vous|tu) (?:portez|portes|manifestez|avez|as) (?:à|a|pour|envers)|pour)"
     rf"|interest in)\s+(?!notre|nos|votre|ce |cette|le poste|la |l')(?:la soci[ée]t[ée] )?{_NOM}{_FIN_NOM}"
@@ -202,6 +237,7 @@ _INTERET = re.compile(
 
 def _propre(nom: str) -> str | None:
     nom = re.sub(r"^\*+|\*+$", "", nom).strip(" \"'«»")
+    nom = re.sub(r"\s*@\s*[\w-]+$", "", nom)  # « Acme @ icims » -> « Acme »
     nom = re.sub(r",\s*(?:recrutement|rh|hr)\b.*$", "", nom, flags=re.IGNORECASE).strip()
     if not nom or nom.lower() in _PLATEFORMES or len(nom) > 40:
         return None
@@ -232,18 +268,33 @@ def _depuis_nom_affiche(nom: str, ats: bool) -> str | None:
     return None
 
 
+def _depuis_adresse_ats(adresse: str) -> str | None:
+    """« noreply.acme@talent-soft.com » -> « acme » ; None pour un robot anonyme."""
+    local = adresse.partition("@")[0].lower()
+    morceaux = [m for m in re.split(r"[._+]", local) if m and not _LOCAL_ROBOT.match(m)]
+    if not morceaux or len(morceaux[0]) < 3 or re.search(r"\d{3,}", morceaux[0]):
+        return None
+    return _propre(morceaux[0].replace("-", " "))
+
+
 def entreprise_du_mail(expediteur: str, sujet: str, texte: str) -> str | None:
     """Employeur d'un mail reçu, ou None si rien de fiable.
 
-    Ordre : nom affiché (« Équipe RH de X », « Prénom - X »), puis « chez X » dans l'objet,
+    Ordre : nom affiché (« Équipe RH de X », « Prénom - X »), puis « chez X » ou « Recrutement X : »
+    dans l'objet, puis l'adresse d'un ATS (noreply.acme@talent-soft.com),
     puis le domaine de l'expéditeur, puis « l'intérêt que vous portez à X » dans le texte.
     """
     nom_affiche, adresse = parseaddr(expediteur)
+    if not adresse and (m := re.match(r"^\s*(.*?)\s*<([^<>@\s]+@[^<>\s]+)>\s*$", expediteur or "")):
+        nom_affiche, adresse = m.group(1).strip('"'), m.group(2)  # « Acme @ icims <…> » sans guillemets
     domaine = adresse.rpartition("@")[2].lower()
     ats = est_generique_ou_ats(domaine) or domaine.endswith("teamtailor-mail.com")
+    sujet_ent = (m := _SUJET_ENTREPRISE.search(sujet)) and _propre(next(g for g in m.groups() if g))
     for candidat in (
         _depuis_nom_affiche(nom_affiche.strip(), ats),
         (m := _CHEZ.search(sujet)) and _propre(m.group(1)),
+        sujet_ent,
+        _depuis_adresse_ats(adresse) if ats else None,
         nom_depuis_domaine(domaine) if domaine else None,
         (m := _INTERET.search(texte[:800])) and _propre(m.group(1)),
     ):

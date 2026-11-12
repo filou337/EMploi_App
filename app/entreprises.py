@@ -51,6 +51,10 @@ DOMAINES_ATS = {
     "successfactors.com",
     "successfactors.eu",
     "icims.com",
+    "icims.eu",
+    "profils.org",
+    "hellowork.com",
+    "reply.hellowork.com",
     "jobvite.com",
     "workablemail.com",
     "workable.com",
@@ -66,6 +70,9 @@ DOMAINES_ATS = {
     "invitations.mailinblack.com",
 }
 _SUFFIXES_DOUBLES = {"co.uk", "com.au", "co.jp", "com.br"}
+_ETIQUETTES_TECHNIQUES = {"mail", "email", "e", "news", "info", "noreply", "notification"}
+# Administrations : le service est dans le sous-domaine (intradef.gouv.fr), pas dans « gouv ».
+NOMS_ADMINISTRATIONS = {"intradef": "Ministère des Armées", "defense": "Ministère des Armées"}
 
 
 def domaine_racine(domaine: str) -> str:
@@ -89,9 +96,16 @@ def nom_depuis_domaine(domaine: str) -> str | None:
     domaine = domaine.lower()
     if domaine_racine(domaine).startswith("teamtailor") and domaine.count(".") >= 2:
         return domaine.split(".")[0].replace("-", " ")
+    parties = domaine.split(".")
+    if domaine_racine(domaine) == "gouv.fr" and len(parties) >= 3:
+        service = parties[-3]
+        return NOMS_ADMINISTRATIONS.get(service, service.replace("-", " "))
     if est_generique_ou_ats(domaine):
         return None
-    return domaine_racine(domaine).split(".")[0].replace("-", " ")
+    racine = domaine_racine(domaine).split(".")
+    if racine[0] in _ETIQUETTES_TECHNIQUES and len(racine) >= 2:  # mail.acme -> acme
+        return racine[1].replace("-", " ")
+    return racine[0].replace("-", " ")
 
 
 def compact(nom: str) -> str:

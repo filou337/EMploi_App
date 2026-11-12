@@ -271,3 +271,99 @@ def test_texte_utile_coupe_la_citation():
 def test_lire_envoi():
     lu = lire("Moi <moi@example.com>", "rh@acme-data.fr", SPONT, "Bonjour", envoye_par_moi=True)
     assert (lu.type, lu.entreprise, lu.poste) == (ENVOI, "acme data", "Analystics Engineer")
+
+
+# --- Cas ajoutés après l'import d'une seconde boîte (mails réels, données fictives) ---------
+@pytest.mark.parametrize(
+    ("sujet", "moi"),
+    [
+        ("[Programme] - Candidature au Statut National Étudiant Entrepreneur", False),
+        ("Renouvellement SNEE 2025-2026 - Camille EXEMPLE", False),
+        ("[Appel à candidatures] Hackathon étudiants en Master - lundi 1/12", False),
+        ("Candidature au Concours de Pitch 2026 - fin des candidatures dimanche", False),
+        ("Re: Candidature au Prix Tremplin 2025", True),  # même envoyé par moi : pas un emploi
+    ],
+)
+def test_vie_etudiante_hors_emploi(sujet, moi):
+    from app.suivi.regles import HORS_EMPLOI
+
+    assert classer(sujet, "Bonjour, merci pour votre candidature.", moi)[0] == HORS_EMPLOI
+
+
+def test_accuse_avec_refus_au_conditionnel():
+    texte = (
+        "Nous vous remercions pour votre candidature au poste de Stage - Data Analyst H/F. "
+        "Votre dossier va être examiné avec attention. Sans retour de notre part sous 30 jours, "
+        "veuillez considérer que nous ne sommes pas en mesure de donner une suite favorable à "
+        "votre candidature."
+    )
+    assert classer("Accusé de réception de votre candidature", texte, False)[0] == ACCUSE
+    # Un vrai refus reste un refus.
+    vrai = "Malheureusement, nous ne pouvons pas donner une suite favorable à votre candidature."
+    assert classer("Votre candidature", vrai, False)[0] == REFUS
+
+
+@pytest.mark.parametrize(
+    ("expediteur", "sujet", "attendu"),
+    [
+        (
+            "Acme France <acme+autoreply@talent.icims.eu>",
+            "Enregistrement de votre candidature",
+            "Acme France",
+        ),
+        (
+            "noreply.globex@talent-soft.com",
+            "Votre candidature - offre 2025-17778 – STAGE : BI",
+            "globex",
+        ),
+        ("myhr-noreply@talent-soft.com", "Votre candidature à l'offre 2025-156365", None),
+        (
+            "groupeinitech@profils.org",
+            "Recrutement Initech Assurances : Votre candidature pour le poste",
+            "Initech Assurances",
+        ),
+        (
+            "groupeinitech@profils.org",
+            "Votre candidature Umbrella - STAGE - Data Analyst - Janvier",
+            "Umbrella",
+        ),
+        (
+            "Hooli Consulting <r-c-6ae369f3@reply.hellowork.com>",
+            "Merci de votre candidature",
+            "Hooli Consulting",
+        ),
+    ],
+)
+def test_entreprise_derriere_un_ats(expediteur, sujet, attendu):
+    assert entreprise_du_mail(expediteur, sujet, "") == attendu
+
+
+def test_administration_nommee_par_son_service():
+    assert entreprise_destinataire("recrutement.contact@intradef.gouv.fr") == "Ministère des Armées"
+    assert entreprise_destinataire("contact@culture.gouv.fr") == "culture"
+
+
+def test_refus_formule_avec_regret():
+    t = "Cependant, nous avons le regret de vous informer que nous ne donnons pas suite à votre candidature."
+    assert classer("{ACME RECRUTEMENT} Candidature non retenue", t, False)[0] == REFUS
+
+
+def test_invitation_a_un_entretien_automatise():
+    t = "Vous êtes maintenant invité(e) à passer votre entretien de préqualification."
+    assert classer("Votre candidature - Prochaine étape", t, False)[0] == POSITIF
+
+
+@pytest.mark.parametrize(
+    ("expediteur", "sujet", "attendu"),
+    [
+        (
+            "nepasrepondre.recrutement@mail.acme",
+            "{ACME RECRUTEMENT} Candidature non retenue",
+            "ACME",
+        ),
+        ("contact@mail.globex", "Votre candidature", "globex"),
+        ("Initech @ icims <initech+autoreply@talent.icims.eu>", "Merci d'avoir postulé", "Initech"),
+    ],
+)
+def test_entreprise_cas_limites(expediteur, sujet, attendu):
+    assert entreprise_du_mail(expediteur, sujet, "") == attendu
