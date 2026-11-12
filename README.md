@@ -321,3 +321,7 @@ EMploi_App/
 ## Auteur
 
 [@filou337](https://github.com/filou337)
+
+## Licence
+
+[MIT](LICENSE) — libre de réutiliser le code. Les données (offres, candidatures, CV) ne font pas partie du dépôt et restent privées.

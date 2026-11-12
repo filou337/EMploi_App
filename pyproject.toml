@@ -3,6 +3,7 @@ name = "emploi-app"
 version = "0.1.0"
 description = "Assistant personnel de candidature data : détection, scoring, dossiers, suivi."
 readme = "README.md"
+license = { file = "LICENSE" }
 requires-python = ">=3.12"
 dependencies = [
     "psycopg[binary]>=3.2",
