@@ -1,0 +1,47 @@
+[project]
+name = "emploi-app"
+version = "0.1.0"
+description = "Assistant personnel de candidature data : détection, scoring, dossiers, suivi."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "psycopg[binary]>=3.2",
+    "python-dotenv>=1.0",
+    "google-api-python-client>=2.150",
+    "google-auth-oauthlib>=1.2",
+    "rapidfuzz>=3.9",
+    "httpx>=0.27",
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
+    "python-multipart>=0.0.9",
+    "openpyxl>=3.1",
+    "pypdf>=5.0",
+    "python-docx>=1.1",
+    "qrcode>=7.4",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "ruff>=0.6",
+    "pillow>=10",  # outils/generer_icones.py seulement
+]
+
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint.flake8-bugbear]
+# Usage normal de FastAPI : dépendances et paramètres déclarés en valeur par défaut.
+extend-immutable-calls = ["fastapi.Depends", "fastapi.File", "fastapi.Form", "fastapi.Query"]

@@ -1,0 +1,75 @@
+# EXEMPLE de profil pour le scoring (app/scoring.py) — copie-le en profil/competences.yaml
+# (fichier personnel, ignoré par git) puis remplace son contenu par TON parcours.
+#
+# Règle : rien ici qui ne soit prouvable par le CV. Le scoring compte une compétence comme
+# acquise si elle figure ici (nom ou alias), même quand le CV l'écrit autrement.
+# Niveaux : maitrise (1.0) > pratique (0.8) > notions (0.5).
+# Après modification : `python -m app.scoring --rescorer` (aucun appel LLM).
+
+profil:
+  titre: Analytics Engineer junior
+  cv_base: AE                      # DA, DE ou AE
+  annees_experience: 0.7           # stages comptés à moitié (nov. 2025 -> aujourd'hui)
+  seniorite_max_annees: 2          # pleine note si l'offre demande au plus 2 ans
+  contrats: [CDI, CDD]
+  teletravail: indifferent         # indifferent | hybride | full_remote
+  langues:
+    francais: C2
+    anglais: B2
+    espagnol: A2
+
+competences:
+  # --- Data Engineering
+  - {nom: Databricks, niveau: pratique}
+  - {nom: Azure Data Factory, niveau: pratique, alias: [ADF, data factory]}
+  - {nom: Spark, niveau: pratique, alias: [Apache Spark]}
+  - {nom: PySpark, niveau: pratique}
+  - {nom: Scala, niveau: pratique}
+  - {nom: architecture médaillon, niveau: pratique, alias: [medallion, bronze silver gold, lakehouse]}
+  - {nom: ETL, niveau: pratique, alias: [ELT, ingestion de données, pipelines de données, pipeline, data pipeline]}
+  - {nom: qualité des données, niveau: pratique, alias: [data quality, contrôles de cohérence, fiabilisation des données]}
+  # --- Programmation et bases
+  - {nom: SQL, niveau: maitrise, alias: [requêtes SQL, T-SQL]}
+  - {nom: Python, niveau: pratique}
+  - {nom: modélisation de données, niveau: pratique, alias: [data modeling, modèle de données, modélisation dimensionnelle]}
+  - {nom: bases de données relationnelles, niveau: pratique, alias: [SGBDR, RDBMS]}
+  # --- Cloud et DevOps
+  - {nom: Azure, niveau: pratique, alias: [Microsoft Azure]}
+  - {nom: Azure DevOps, niveau: pratique}
+  - {nom: CI/CD, niveau: pratique, alias: [intégration continue, déploiement continu]}
+  - {nom: Git, niveau: pratique, alias: [GitHub, versionnement]}
+  - {nom: Docker, niveau: notions}
+  # --- BI
+  - {nom: Power BI, niveau: maitrise, alias: [PowerBI]}
+  - {nom: DAX, niveau: pratique}
+  - {nom: Power Query, niveau: pratique, alias: [M]}
+  - {nom: data visualisation, niveau: maitrise, alias: [dataviz, tableaux de bord, dashboards, reporting]}
+  - {nom: KPI, niveau: pratique, alias: [indicateurs]}
+  - {nom: Tabular Editor, niveau: notions}
+  - {nom: Measure Killer, niveau: notions}
+  - {nom: gouvernance BI, niveau: notions, alias: [data governance, gouvernance des données]}
+  # --- Méthodes et fonctionnel
+  - {nom: Agile, niveau: pratique, alias: [Scrum]}
+  - {nom: recueil des besoins, niveau: pratique, alias: [expression de besoins, analyse du besoin, règles de gestion]}
+  - {nom: documentation, niveau: pratique}
+  - {nom: data storytelling, niveau: pratique, alias: [restitution]}
+  - {nom: benchmark, niveau: pratique, alias: [analyse comparative]}
+  - {nom: anglais, niveau: pratique, alias: [english]}
+
+# Missions déjà menées (expérience ou projet). Le matching les rapproche des missions de l'offre.
+missions:
+  - Concevoir et suivre des pipelines d'ingestion multi-sources
+  - Structurer les traitements en architecture médaillon Bronze, Silver, Gold
+  - Mettre en place des contrôles de qualité, cohérence et complétude des données
+  - Industrialiser les évolutions par CI/CD
+  - Recueillir les besoins métier et les traduire en modèles de données
+  - Construire des tableaux de bord Power BI de suivi des KPI
+  - Documenter les traitements
+
+# Secteurs : vises = 10/10, neutre = 7/10, exclus = 0/10 (mots cherchés dans la fiche).
+secteurs:
+  vises:
+    - industrie
+    - energie
+    - conseil
+  exclus: []

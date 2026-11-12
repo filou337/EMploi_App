@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EMploi_App</title>
+<meta name="theme-color" content="#173448">
+<meta name="mobile-web-app-capable" content="yes">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icones/favicon.png">
+<link rel="apple-touch-icon" href="icones/apple-touch-icon.png">
+<link rel="stylesheet" href="fonts.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="barre">
+  <a class="marque" href="#tableau">EMploi<span>_App</span></a>
+  <nav id="nav">
+    <a href="#tableau">Tableau de bord</a>
+    <a href="#pipeline">Pipeline</a>
+    <a href="#offres">Opportunités</a>
+    <a href="#candidatures">Candidatures</a>
+    <a href="#reponses">Réponses <b id="badge-reponses" class="pastille" hidden></b></a>
+    <a href="#documents">CV &amp; lettre</a>
+    <a href="#spontanees">Spontanées</a>
+    <a href="#rapport">Rapport</a>
+    <a href="#veille">Veille</a>
+    <a href="#salon">Salon</a>
+    <a href="#telephone">📱</a>
+  </nav>
+  <button class="cloche" id="cloche" aria-label="Notifications">🔔<b id="badge-notif" class="pastille" hidden></b></button>
+</header>
+
+<main id="vue" aria-live="polite"></main>
+
+<dialog id="fenetre">
+  <form method="dialog" class="fenetre-entete">
+    <h2 id="fenetre-titre"></h2>
+    <button class="icone" aria-label="Fermer">×</button>
+  </form>
+  <div id="fenetre-corps"></div>
+</dialog>
+
+<div id="toast" role="status" hidden></div>
+<script src="config.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js" crossorigin="anonymous"></script>
+<script src="donnees.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

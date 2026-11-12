@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=EMploi_App
+Comment=Tableau de bord de recherche d'emploi
+Exec=/chemin/vers/EMploi_App/outils/lancer.sh
+Terminal=true
+Icon=x-office-spreadsheet
+Categories=Office;

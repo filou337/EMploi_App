@@ -1,0 +1,24 @@
+# Base Postgres locale pour le développement.
+# Port 5433 côté PC (le 5432 est déjà pris par un autre projet).
+services:
+  db:
+    image: postgres:17-alpine
+    container_name: emploi_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-emploi}
+      POSTGRES_USER: ${POSTGRES_USER:-emploi}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?définis POSTGRES_PASSWORD dans .env}
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5433}:5432"   # accessible uniquement depuis ton PC
+    volumes:
+      - emploi_pgdata:/var/lib/postgresql/data
+      - ./sql:/docker-entrypoint-initdb.d:ro       # schema.sql exécuté au 1er démarrage
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  emploi_pgdata:

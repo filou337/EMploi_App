@@ -1,0 +1,42 @@
+# --- Secrets (ne jamais pousser) ---
+secrets/
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+credentials*.json
+client_secret*.json
+token*.json
+service-account*.json
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# --- Données personnelles et fichiers générés ---
+output/
+generated/
+Candidatures/
+echantillons/
+profil/documents/
+profil/competences.yaml
+profil/calibrage.csv
+docs/*.pdf
+sauvegardes/
+*.log
+
+# --- Éditeurs et système ---
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
