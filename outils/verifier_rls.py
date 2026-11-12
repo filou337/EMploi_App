@@ -34,6 +34,7 @@ TABLES = (
     "dossier_fichiers",
     "rapports",
     "spontanees",
+    "envois",
 )
 VUES = (
     "v_offres",

@@ -796,6 +796,45 @@ def opposition_spontanee(sid: int, conn: Conn = Depends(db)):
     return {"ok": True}
 
 
+# --- Envoi en 1 clic depuis Gmail (toujours sur ton clic) -----------------------------------
+class Interrupteur(BaseModel):
+    actif: bool
+
+
+class MailAEnvoyer(BaseModel):
+    objet: str = Field(min_length=1, max_length=300)
+    corps: str = Field(min_length=1, max_length=8000)
+
+
+def _envoi(fn):
+    from app import envoi
+
+    try:
+        return fn(envoi)
+    except envoi.EnvoiImpossible as e:
+        raise HTTPException(400, str(e)) from e
+
+
+@app.get("/api/envoi")
+def etat_envoi(conn: Conn = Depends(db)):
+    return _envoi(lambda e: e.etat(conn))
+
+
+@app.put("/api/envoi")
+def interrupteur_envoi(i: Interrupteur, conn: Conn = Depends(db)):
+    return _envoi(lambda e: e.activer(conn, i.actif))
+
+
+@app.post("/api/spontanees/{sid}/envoyer")
+def envoyer_spontanee(sid: int, m: MailAEnvoyer, conn: Conn = Depends(db)):
+    return _envoi(lambda e: e.envoyer_spontanee(conn, sid, m.objet, m.corps))
+
+
+@app.post("/api/candidatures/{cid}/envoyer-relance")
+def envoyer_relance(cid: int, m: MailAEnvoyer, conn: Conn = Depends(db)):
+    return _envoi(lambda e: e.envoyer_relance(conn, cid, m.objet, m.corps))
+
+
 # --- Fabrication des dossiers (agent Dossier) ---------------------------------------------
 @app.get("/api/fabrications")
 def fabrications(offre_id: int, conn: Conn = Depends(db)):

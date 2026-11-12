@@ -87,6 +87,24 @@ const ROUTES = [
     return { ok: true };
   }],
   ["POST", /^spontanees\/(\d+)\/opposition$/, async (m) => { verifier(await sb.rpc("spontanee_opposition", { p_id: +m[1] })); return { ok: true }; }],
+  ["GET", /^envoi$/, async () => {
+    const p = Object.fromEntries(verifier(await sb.from("parametres").select("cle, valeur").in("cle", ["envoi", "seuils"])).map((r) => [r.cle, r.valeur]));
+    const e = p.envoi || {}, debut = new Date(); debut.setHours(0, 0, 0, 0);
+    const { count } = await sb.from("envois").select("id", { count: "exact", head: true }).eq("statut", "envoye").gte("cree_le", debut.toISOString());
+    return { autorise: Boolean(e.autorise_pour), adresse: e.autorise_pour || null, actif: Boolean(e.actif),
+      envoyes_aujourdhui: count || 0, plafond: (p.seuils || {}).envois_par_jour ?? 10 };
+  }],
+  ["PUT", /^envoi$/, async (_m, _q, o) => {
+    const actuel = verifier(await sb.from("parametres").select("valeur").eq("cle", "envoi").maybeSingle())?.valeur || {};
+    const actif = Boolean(corps(o).actif);
+    if (actif && !actuel.autorise_pour) throw new ErreurDonnees("Autorise d'abord l'envoi sur le PC : python -m app.envoi --autoriser");
+    verifier(await sb.from("parametres").upsert({ cle: "envoi", valeur: { ...actuel, actif } }));
+    return apiSupabase("envoi");
+  }],
+  ["POST", /^spontanees\/(\d+)\/envoyer$/, async (m, _q, o) =>
+    attendreDemande(await deposerDemande("envoyer_mail", { type: "spontanee", id: +m[1], ...corps(o) }))],
+  ["POST", /^candidatures\/(\d+)\/envoyer-relance$/, async (m, _q, o) =>
+    attendreDemande(await deposerDemande("envoyer_mail", { type: "relance", id: +m[1], ...corps(o) }))],
   ["GET", /^rapports$/, async () => verifier(await sb.from("rapports").select("*").order("cree_le", { ascending: false }).limit(10))],
   ["GET", /^journal$/, async () => verifier(await sb.from("v_journal").select("*").order("debut", { ascending: false }).limit(50))],
 

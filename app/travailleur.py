@@ -88,6 +88,14 @@ def executer(conn: psycopg.Connection, d: dict) -> tuple[dict, bytes | None]:
         eid = spontanees.ajouter_cible(conn, p["entreprise"], p.get("site_web"), p.get("email"))
         conn.commit()  # la cible reste enregistrée même si la rédaction échoue
         return spontanees.preparer(conn, eid), None
+    if t == "envoyer_mail":
+        from app import envoi
+
+        if p.get("type") == "spontanee":
+            return envoi.envoyer_spontanee(conn, int(p["id"]), p["objet"], p["corps"]), None
+        if p.get("type") == "relance":
+            return envoi.envoyer_relance(conn, int(p["id"]), p["objet"], p["corps"]), None
+        raise ValueError("Type d'envoi inconnu.")
     raise ValueError(f"Type de demande inconnu : {t}")
 
 

@@ -4,7 +4,7 @@ Outil personnel de recherche d'emploi pour des postes **Data Analyst**, **Data E
 
 Il repère chaque nouvelle offre pertinente dès son arrivée dans Gmail, vérifie qu'elle est encore ouverte, écarte les doublons, la note sur 100 face à mon profil, puis prépare un dossier de candidature complet (fiche de poste, CV ATS adapté, lettre de motivation). Il suit ensuite les réponses jusqu'à l'entretien.
 
-> **Règle de conduite : aucun envoi automatique.** L'outil prépare des dossiers et des brouillons. C'est moi qui clique sur « Postuler » et qui envoie les mails.
+> **Règle de conduite : aucun envoi automatique.** L'outil prépare des dossiers et des brouillons. C'est moi qui clique sur « Postuler » ; les mails partent depuis ma messagerie, ou en 1 clic depuis Gmail si je l'ai activé (jamais sans mon clic).
 
 **Statut :** étape 1 terminée (LinkedIn, Indeed). Étape 2 presque terminée : doublons, fraîcheur, candidatures passées et recherche de la fiche chez l'employeur (ATS publics) en place ; reste la seconde boîte Gmail et les clés Adzuna.
 
@@ -90,6 +90,7 @@ Commandes utiles :
 | `python -m app.scoring --rescorer` | Recalcule la grille V2 (score, classe A/B/C) des offres déjà analysées, sans appel LLM |
 | `python -m app.scoring --exporter-calibrage` puis `--calibrer` | Exporte 20 offres à noter dans `profil/calibrage.csv`, puis propose les poids qui collent le mieux à tes notes |
 | `python -m app.spontanees.agent --entreprise "Acme" --site acme.fr` | Prépare une candidature spontanée (sans option : les brouillons du jour pour les entreprises de ta veille) ; `--email` si tu connais l'adresse |
+| `python -m app.envoi --autoriser` | Autorise l'envoi en 1 clic depuis Gmail (boîte de ton CV, droit d'envoi seul) ; `--etat` pour vérifier |
 | `python -m app.rapport` | Rapport des 3 derniers jours (produit par l'orchestrateur quand il est dû ; `--forcer` pour l'avoir tout de suite) |
 | `python -m app.migrations` | Applique les migrations de `sql/migrations/` (à lancer après chaque mise à jour du code) |
 
@@ -202,7 +203,7 @@ Moyenne pondérée sur 100, avec une justification obligatoire pour chaque crit�
 
 ## Garde-fous
 
-- **Envoi manuel** : aucun remplissage automatique de formulaire, les mails restent des brouillons.
+- **Envoi sur ton clic seulement** : aucun remplissage automatique de formulaire. L'envoi depuis Gmail (spontanées, relances) est désactivé par défaut ; une fois autorisé (`python -m app.envoi --autoriser`, droit `gmail.send` dans un jeton séparé, compte vérifié) et activé, chaque mail part uniquement quand tu cliques « Envoyer », 10 par jour au plus, jamais deux fois, journalisé dans `envois`.
 - **Véracité du CV** : aucune compétence hors de `competences.yaml`. Un contrôle dans le code fait échouer la génération sinon.
 - **Respect des sites** : lecture des mails d'alerte et des pages publiques à faible cadence. Pas d'aspiration de LinkedIn ni de connexion automatisée aux plateformes.
 - **RGPD** : contacts limités aux adresses publiques liées au recrutement (jamais une adresse nominative), source enregistrée, robots.txt respecté, 5 spontanées par jour au maximum, jamais deux fois la même entreprise en 90 jours, droit d'opposition définitif (bouton « Opposition »).
@@ -266,6 +267,7 @@ EMploi_App/
 │   ├── criteres.py         # critères de veille et seuils (modifiables dans l'appli)
 │   ├── scoring.py          # grille V2 sur 100, classes A/B/C, calibrage des poids
 │   ├── rapport.py          # rapport tous les 3 jours (table rapports, onglet Rapport)
+│   ├── envoi.py            # envoi en 1 clic depuis Gmail (gmail.send, interrupteur, plafond, journal)
 │   ├── spontanees/         # contacts.py (adresse RH publique, robots.txt), agent.py (brouillons)
 │   ├── dossiers.py         # dossier local du poste (Candidatures/…/offre.txt)
 │   ├── notifications.py

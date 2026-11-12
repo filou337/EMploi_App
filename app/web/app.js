@@ -446,20 +446,23 @@ function texteRelance(r, ident, langue) {
 async function afficherRelances() {
   const zone = $("#zone-relances");
   if (!zone) return;
-  const [rows, params] = await Promise.all([api("relances"), api("parametres")]);
+  const [rows, params, env] = await Promise.all([api("relances"), api("parametres"), api("envoi").catch(() => ({}))]);
   const ident = params.identite || {};
+  const textes = {};
   if (!rows.length) { zone.innerHTML = ""; return; }
   zone.innerHTML = `<div class="carte section"><h3>Relances à faire (${rows.length})</h3>
     <p class="note">J+7 après la candidature, puis J+14. Relis le texte, envoie-le depuis ta messagerie, puis clique « J'ai relancé ».</p>
     <ul class="liste">${rows.map((r) => {
       const langue = ANGLAIS.test(r.poste || r.offre_intitule || "") && !/[éèà]/.test(r.poste || "") ? "en" : "fr";
       const t = texteRelance(r, ident, langue);
+      textes[r.id] = t;
       const mailto = `mailto:${encodeURIComponent(r.contact_email || "")}?subject=${encodeURIComponent(t.objet)}&body=${encodeURIComponent(t.corps)}`;
       return `<li data-id="${r.id}"><span style="flex:1"><strong>${esc(r.entreprise || "—")}</strong> · ${esc(r.poste || r.offre_intitule || "candidature")}
         <span class="etiquette ambre">relance ${r.numero}</span>
         <div class="sous">candidature du ${jour(r.postule_le)} · due le ${jour(r.due_le)} · ${r.contact_email ? esc(r.contact_email) : "destinataire à saisir (aucun contact connu)"}</div>
         <details><summary class="note">Voir le texte</summary><pre class="texte-relance">${esc(t.objet)}\n\n${esc(t.corps)}</pre></details></span>
-        <span class="actions"><a class="bouton petit principal" href="${mailto}">Ouvrir dans ma messagerie</a>
+        <span class="actions">${env.actif && r.contact_email ? '<button class="bouton petit principal" data-envoyer>Envoyer depuis Gmail</button>' : ""}
+          <a class="bouton petit ${env.actif && r.contact_email ? "" : "principal"}" href="${mailto}">Ouvrir dans ma messagerie</a>
           <button class="bouton petit" data-copier>Copier</button>
           <button class="bouton petit" data-relance>J'ai relancé</button>
           <button class="bouton petit" data-ignorer>Ne pas relancer</button></span></li>`;
@@ -467,7 +470,13 @@ async function afficherRelances() {
   zone.onclick = async (e) => {
     const li = e.target.closest("li[data-id]");
     if (!li) return;
-    if (e.target.matches("[data-copier]")) {
+    if (e.target.matches("[data-envoyer]")) {
+      const t = textes[li.dataset.id];
+      if (!confirm(`Envoyer maintenant cette relance depuis ${env.adresse} ?\n\n${t.objet}`)) return;
+      e.target.disabled = true;
+      try { await envoyer(`candidatures/${li.dataset.id}/envoyer-relance`, "POST", t); toast("Relance envoyée et enregistrée."); afficherRelances(); chargerCand(); }
+      catch (err) { toast(err.message); e.target.disabled = false; }
+    } else if (e.target.matches("[data-copier]")) {
       try { await navigator.clipboard.writeText(li.querySelector(".texte-relance").textContent); toast("Texte copié."); }
       catch { toast("Copie impossible : sélectionne le texte à la main."); }
     } else if (e.target.matches("[data-relance]")) {
@@ -702,7 +711,7 @@ async function vueSalon(v) {
 const STATUT_SPONT = { brouillon: ["", "à envoyer"], envoyee: ["vert", "envoyée"], ignoree: ["", "ignorée"], erreur: ["rouge", "erreur"] };
 
 async function vueSpontanees(v) {
-  const [rows, docs] = await Promise.all([api("spontanees"), api("documents").catch(() => [])]);
+  const [rows, docs, env] = await Promise.all([api("spontanees"), api("documents").catch(() => []), api("envoi").catch(() => ({}))]);
   const cv = docs.find((d) => d.type === "cv" && d.par_defaut), lm = docs.find((d) => d.type === "lm" && d.par_defaut);
   const pj = [cv && `<button class="bouton petit" data-telecharger="documents/${cv.id}/fichier">CV</button>`,
     lm && `<button class="bouton petit" data-telecharger="documents/${lm.id}/fichier">Lettre</button>`].filter(Boolean).join(" ");
@@ -710,7 +719,14 @@ async function vueSpontanees(v) {
   v.innerHTML = `<div class="entete"><div><h1>Candidatures spontanées.</h1>
       <p>L'outil trouve l'adresse de recrutement publique de l'entreprise et rédige le mail ; c'est toi qui l'envoies
       depuis ta messagerie, en joignant ton CV et ta lettre. Au plus 5 brouillons par jour, jamais deux fois la même entreprise en 90 jours.</p></div></div>
-    <div class="carte"><h3>Préparer une spontanée</h3>
+    <div class="carte"><h3>Envoi depuis Gmail</h3>${env.autorise
+      ? `<p class="note">Compte autorisé : <strong>${esc(env.adresse)}</strong> · ${env.envoyes_aujourdhui}/${env.plafond} envoi(s) aujourd'hui.
+          Activé, chaque brouillon gagne un bouton « Envoyer depuis Gmail » : rien ne part sans ton clic.</p>
+        <label class="actions"><input type="checkbox" id="envoi-actif" ${env.actif ? "checked" : ""}>
+          <span>${env.actif ? "Activé : l'agent peut envoyer à ton nom quand tu cliques" : "Désactivé : tu envoies depuis ta messagerie"}</span></label>`
+      : `<p class="note">Pas encore autorisé. Sur le PC, lance <code>python -m app.envoi --autoriser</code> et choisis
+          le compte de ton CV : seul le droit d'<em>envoyer</em> est demandé, la lecture reste en lecture seule.</p>`}</div>
+    <div class="carte section"><h3>Préparer une spontanée</h3>
       <form class="formulaire" id="form-spont"><div class="ligne">
         <label>Entreprise<input class="champ" name="entreprise" required maxlength="200"></label>
         <label>Site web<input class="champ" name="site_web" placeholder="acme.fr"></label></div>
@@ -724,7 +740,8 @@ async function vueSpontanees(v) {
         <div class="formulaire"><label>Objet<input class="champ" data-champ="objet" value="${esc(r.objet)}"></label>
           <label>Message<textarea class="champ" data-champ="corps" rows="14">${esc(r.corps)}</textarea></label></div>
         <div class="actions section">
-          <a class="bouton principal" data-mailto>Ouvrir dans ma messagerie</a>
+          ${env.actif ? `<button class="bouton principal" data-a="envoyer">Envoyer depuis Gmail${pj ? " (CV + LM joints)" : ""}</button>` : ""}
+          <a class="bouton ${env.actif ? "" : "principal"}" data-mailto>Ouvrir dans ma messagerie</a>
           <button class="bouton" data-a="copier">Copier le texte</button>
           ${pj ? `<span class="note">Pièces jointes :</span> ${pj}` : '<span class="note">Dépose ton CV et ta lettre (onglet « CV &amp; lettre ») pour les joindre.</span>'}
         </div>
@@ -747,6 +764,10 @@ async function vueSpontanees(v) {
       a.href = `mailto:${encodeURIComponent(r.destinataire)}?subject=${encodeURIComponent(m.objet)}&body=${encodeURIComponent(m.corps)}`; };
     maj(); carte.addEventListener("input", maj);
   });
+  $("#envoi-actif")?.addEventListener("change", async (e) => {
+    try { await envoyer("envoi", "PUT", { actif: e.target.checked }); toast(e.target.checked ? "Envoi depuis Gmail activé." : "Envoi désactivé."); router(); }
+    catch (err) { toast(err.message); e.target.checked = !e.target.checked; }
+  });
   $("#form-spont").addEventListener("submit", async (e) => {
     e.preventDefault();
     const b = e.target.querySelector("button"), f = Object.fromEntries(new FormData(e.target));
@@ -762,6 +783,14 @@ async function vueSpontanees(v) {
     try {
       if (a === "copier") { const m = valeurs(carte); await navigator.clipboard.writeText(`${m.objet}\n\n${m.corps}`); toast("Texte copié."); return; }
       if (a === "opposition" && !confirm("Ne plus jamais contacter cette adresse ?")) return;
+      if (a === "envoyer") {
+        const r = rows.find((x) => x.id === +id);
+        if (!confirm(`Envoyer maintenant ce mail à ${r.destinataire} depuis ${env.adresse}, avec ton CV et ta lettre ?`)) return;
+        b.disabled = true; toast("Envoi en cours…");
+        try { await envoyer(`spontanees/${id}/envoyer`, "POST", valeurs(carte)); toast("Envoyé : candidature ajoutée au suivi."); router(); }
+        catch (err) { toast(err.message); b.disabled = false; }
+        return;
+      }
       if (a === "envoyee" || a === "enregistrer") await envoyer(`spontanees/${id}`, "PUT", valeurs(carte));
       if (a !== "enregistrer") await envoyer(`spontanees/${id}/${a}`, "POST");
       toast({ envoyee: "Candidature ajoutée au suivi (relance prévue).", enregistrer: "Modifications enregistrées.",
