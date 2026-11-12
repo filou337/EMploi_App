@@ -65,7 +65,10 @@ echo "Version : $VERSION · Adresse : $SITE"
 git -C "$COPIE" status --short | head -20
 
 if [ "$ESSAI" = 1 ]; then echo "(essai à blanc : rien n'est envoyé)"; exit 0; fi
-if [ "$OUI" = 0 ]; then read -r -p "Publier sur $SITE ? [o/N] " R; [ "$R" = o ] || [ "$R" = O ] || stop "Annulé."; fi
+if [ "$OUI" = 0 ]; then
+  [ -t 0 ] || stop "Pas de terminal pour confirmer : relance avec -y (outils/publier.sh -y \"$MSG\")."
+  read -r -p "Publier sur $SITE ? [o/N] " R; [ "$R" = o ] || [ "$R" = O ] || stop "Annulé."
+fi
 etape "Envoi"
 git -C "$COPIE" commit -q -m "$MSG" || echo "(rien de nouveau)"
 git -C "$COPIE" branch -M main
