@@ -193,3 +193,18 @@ def test_faits_valides_acceptes_par_le_garde_fou(monkeypatch):
     assert "12 missions" in corps and "Kanban" in corps
     assert "Snowflake" not in corps and len(verif["retires"]) == 1
     assert "https://exemple.github.io/p" in corps and corps.rstrip().endswith("Camille Test")
+
+
+def test_jamais_de_candidature_auto_hors_cdi_cdd():
+    assert ca.hors_cdi_cdd({"intitule": "Stage de fin d'études - Data", "contrat": None})
+    assert ca.hors_cdi_cdd({"intitule": "Data Analyst", "contrat": "alternance"})
+    assert not ca.hors_cdi_cdd({"intitule": "Data Analyst (CDI)", "contrat": "CDI"})
+
+
+def test_civilite_jamais_devinee():
+    offre = "Contact : Mme Sophie Martin, responsable data. Envoyez votre candidature."
+    assert ca.salutation_sure("Madame Martin,", offre) == "Madame Martin,"
+    assert ca.salutation_sure("Monsieur Martin,", offre) == "Madame, Monsieur,"  # civilité inventée
+    assert ca.salutation_sure("Madame Durand,", "Envoyez votre CV.") == "Madame, Monsieur,"
+    assert ca.salutation_sure("Bonjour Sophie Martin,", offre) == "Bonjour Sophie Martin,"
+    assert ca.salutation_sure("", offre) == "Madame, Monsieur,"

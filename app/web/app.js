@@ -982,7 +982,7 @@ async function vueVeille(v) {
           <button class="bouton petit" data-retirer>Retirer</button></span></li>`).join("") || '<li class="note">Aucune entreprise : ajoute-en une.</li>'}</ul></div>
       <div class="carte"><h3>Tes critères</h3><form class="formulaire" id="form-criteres">
         <label>Postes recherchés (séparés par des virgules)<textarea class="champ" name="postes" style="min-height:70px">${esc(c.postes.join(", "))}</textarea></label>
-        <div class="ligne"><label>Contrats exclus<input class="champ" name="contrats_exclus" value="${esc(c.contrats_exclus.join(", "))}"></label>
+        <div class="ligne"><label>Contrats à EXCLURE (jamais proposés ni envoyés)<input class="champ" name="contrats_exclus" placeholder="stage, alternance, freelance, interim" value="${esc(c.contrats_exclus.join(", "))}"></label>
           <label>Niveaux exclus<input class="champ" name="niveaux_exclus" value="${esc(c.niveaux_exclus.join(", "))}"></label></div>
         <label>Lieux acceptés (lieu inconnu = accepté)<textarea class="champ" name="lieux" style="min-height:70px">${esc(c.lieux.join(", "))}</textarea></label>
         <div class="ligne"><label>Seuil de qualification (/100)<input class="champ" type="number" min="50" max="100" name="fabrication" value="${s.fabrication}"></label>
