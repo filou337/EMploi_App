@@ -173,12 +173,12 @@ def test_pages_francaises_et_data_d_abord():
 
 def test_intitule_avec_filiere_et_lieu():
     p = recherche.Poste(
-        "Data Analyst Pilotage des Notations - Innovation / Digital - La Defense, Ile de France, France",
-        "La Defense, France",
+        "Data Analyst Reporting Financier - Finance / Pilotage - Paris, Ile de France, France",
+        "Paris, France",
         "u",
         None,
         "",
     )
-    assert recherche.similarite_titre("Data Analyst Pilotage des Notations", p) == 100
+    assert recherche.similarite_titre("Data Analyst Reporting Financier", p) == 100
     stage = recherche.Poste("Data Analyst - Stage", "Paris", "u", None, "")
     assert recherche.similarite_titre("Data Analyst", stage) == 0  # le niveau reste contrôlé
