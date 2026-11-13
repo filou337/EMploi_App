@@ -68,7 +68,8 @@ def contact_publie(conn: psycopg.Connection, offre: dict) -> tuple[str, str] | N
         # 2. Contact déjà connu de cet employeur (et sans opposition).
         c = conn.execute(
             "SELECT email, source_url FROM contacts WHERE entreprise_id = %s AND email IS NOT NULL"
-            " AND NOT opposition ORDER BY (source_url = 'saisie manuelle') DESC, id LIMIT 1",
+            " AND NOT opposition AND coalesce(fonction, '') <> 'contact général'"
+            " ORDER BY (source_url = 'saisie manuelle') DESC, id LIMIT 1",
             (offre["entreprise_id"],),
         ).fetchone()
         if c:

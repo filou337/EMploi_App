@@ -39,6 +39,11 @@ _RH = re.compile(
     r"(?:[._-]\w+)?$",
     re.IGNORECASE,
 )
+# Adresse générale de l'entreprise : seulement en secours, quand aucune adresse RH n'est publiée.
+_GENERIQUE = re.compile(
+    r"^(?:contact|contacts|info|infos|information|hello|bonjour|accueil|nous-contacter|contactez-nous)$",
+    re.IGNORECASE,
+)
 _FICHIER = re.compile(r"\.(?:png|jpe?g|gif|svg|webp|css|js)$", re.IGNORECASE)
 
 
@@ -46,6 +51,7 @@ _FICHIER = re.compile(r"\.(?:png|jpe?g|gif|svg|webp|css|js)$", re.IGNORECASE)
 class ContactTrouve:
     email: str
     source_url: str
+    generique: bool = False  # contact@, info@… : le mail demande de transmettre aux RH
 
 
 def site_normalise(site: str) -> str:
@@ -73,8 +79,15 @@ def est_adresse_rh(email: str) -> bool:
     return bool(_RH.match(local))
 
 
-def adresses(html: str, domaine: str) -> list[str]:
-    """Adresses RH du domaine présentes dans la page (texte ou liens mailto)."""
+def est_adresse_generique(email: str) -> bool:
+    return bool(_GENERIQUE.match(email.split("@", 1)[0]))
+
+
+def adresses(html: str, domaine: str, generiques: bool = False) -> list[str]:
+    """Adresses RH du domaine présentes dans la page (texte ou liens mailto).
+
+    Avec `generiques`, garde aussi contact@, info@… (jamais une adresse nominative).
+    """
     texte = html.replace("&#64;", "@").replace("[at]", "@").replace("(at)", "@")
     vues = []
     for brute in _EMAIL.findall(texte):
@@ -83,7 +96,7 @@ def adresses(html: str, domaine: str) -> list[str]:
             continue
         if domaine_racine(email.rsplit("@", 1)[1]) != domaine:
             continue
-        if est_adresse_rh(email):
+        if est_adresse_rh(email) or (generiques and est_adresse_generique(email)):
             vues.append(email)
     return vues
 
@@ -99,8 +112,9 @@ def _robots(client: httpx.Client, base: str) -> RobotFileParser:
 
 
 def trouver(
-    site: str, client: httpx.Client | None = None, pause: float = PAUSE
+    site: str, client: httpx.Client | None = None, pause: float = PAUSE, secours: bool = False
 ) -> list[ContactTrouve]:
+    """Adresses de recrutement du site ; avec `secours`, son adresse générale s'il n'y en a pas."""
     base = site_normalise(site)
     domaine = domaine_racine(urlparse(base).hostname or "")
     client = client or httpx.Client(
@@ -120,13 +134,27 @@ def trouver(
             continue
         if r.status_code != 200 or "html" not in r.headers.get("content-type", "html"):
             continue
-        for email in adresses(r.text, domaine):
+        for email in adresses(r.text, domaine, generiques=secours):
             trouves.setdefault(email, str(r.url))
-        if trouves and chemin in ("/recrutement", "/carrieres", "/careers", "/jobs"):
+        if any(est_adresse_rh(e) for e in trouves) and chemin in (
+            "/recrutement",
+            "/carrieres",
+            "/careers",
+            "/jobs",
+        ):
             break  # adresse de recrutement trouvée sur une page carrières : inutile d'aller plus loin
     # Les adresses « recrutement » passent avant « rh », « jobs »…
-    ordre = sorted(trouves, key=lambda e: (not e.startswith("recrut"), len(e)))
-    return [ContactTrouve(e, trouves[e]) for e in ordre]
+    rh = sorted(
+        (e for e in trouves if est_adresse_rh(e)),
+        key=lambda e: (not e.startswith("recrut"), len(e)),
+    )
+    if rh:  # une adresse RH existe : l'adresse générale n'est jamais proposée
+        return [ContactTrouve(e, trouves[e]) for e in rh]
+    generales = sorted(
+        (e for e in trouves if est_adresse_generique(e)),
+        key=lambda e: (not e.startswith("contact"), len(e)),
+    )
+    return [ContactTrouve(e, trouves[e], generique=True) for e in generales[:1]]
 
 
 def texte_accueil(site: str, client: httpx.Client | None = None, limite: int = 4000) -> str:

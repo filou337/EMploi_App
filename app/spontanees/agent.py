@@ -33,6 +33,11 @@ from app.notifications import notifier
 from app.spontanees import contacts
 
 DELAI_JOURS = 90
+FONCTION_GENERIQUE = "contact général"  # contact@, info@… : en secours, sans adresse RH publiée
+TRANSMISSION = (
+    "Je vous écris via votre adresse de contact : pourriez-vous transmettre ce message à la"
+    " personne en charge du recrutement ? Un grand merci par avance."
+)
 
 CONSIGNE = """Tu rédiges le corps d'un MAIL de candidature spontanée (pas une lettre), en français.
 Le CV (<cv_texte>), la lettre de référence du candidat (<lettre_modele>) et la présentation
@@ -81,8 +86,9 @@ def ajouter_cible(
 def _contact(conn: psycopg.Connection, ent: dict) -> dict | None:
     """Contact RH non opposé ; cherché sur le site s'il n'est pas encore connu."""
     sql = (
-        "SELECT id, email, source_url, opposition FROM contacts WHERE entreprise_id = %s"
-        " AND email IS NOT NULL ORDER BY (source_url = 'saisie manuelle') DESC, id"
+        "SELECT id, email, source_url, opposition, fonction FROM contacts WHERE entreprise_id = %s"
+        " AND email IS NOT NULL ORDER BY (source_url = 'saisie manuelle') DESC,"
+        f" (fonction = '{FONCTION_GENERIQUE}') ASC, id"
     )
     connus = conn.execute(sql, (ent["id"],)).fetchall()
     if any(c["opposition"] for c in connus):
@@ -91,11 +97,16 @@ def _contact(conn: psycopg.Connection, ent: dict) -> dict | None:
         return connus[0]
     if not ent.get("site_web"):
         return None
-    for t in contacts.trouver(ent["site_web"]):
+    for t in contacts.trouver(ent["site_web"], secours=True):
         conn.execute(
             "INSERT INTO contacts (entreprise_id, email, fonction, source_url)"
-            " VALUES (%s, %s, 'recrutement', %s) ON CONFLICT DO NOTHING",
-            (ent["id"], t.email, t.source_url),
+            " VALUES (%s, %s, %s, %s) ON CONFLICT DO NOTHING",
+            (
+                ent["id"],
+                t.email,
+                FONCTION_GENERIQUE if t.generique else "recrutement",
+                t.source_url,
+            ),
         )
     connus = conn.execute(sql, (ent["id"],)).fetchall()
     return connus[0] if connus else None
@@ -107,8 +118,12 @@ def _signature(ident: dict) -> str:
     return "\n".join(x for x in lignes if x)
 
 
-def assembler(res: dict, ident: dict) -> str:
-    morceaux = [res.get("salutation") or "Madame, Monsieur,", *res.get("paragraphes", [])]
+def assembler(res: dict, ident: dict, generique: bool = False) -> str:
+    """Corps du mail ; à une adresse générale, demande d'abord de transmettre aux RH."""
+    morceaux = [res.get("salutation") or "Madame, Monsieur,"]
+    if generique:
+        morceaux.append(TRANSMISSION)
+    morceaux += res.get("paragraphes", [])
     morceaux.append(res.get("formule") or "Je vous prie d'agréer mes salutations distinguées.")
     corps = "\n\n".join(m.strip() for m in morceaux if m and m.strip())
     # Si le modèle a laissé un jeton de masquage, on le retire plutôt que d'envoyer « [NOM] ».
@@ -185,6 +200,7 @@ def preparer(conn: psycopg.Connection, eid: int) -> dict:
         raise SpontaneeImpossible("Le mail généré ne passait pas le garde-fou de véracité.")
     res["paragraphes"] = gardes
     objet = (res.get("objet") or f"Candidature spontanée – {titre}").strip()
+    generique = contact.get("fonction") == FONCTION_GENERIQUE
     row = conn.execute(
         """
         INSERT INTO spontanees (entreprise_id, contact_id, destinataire, objet, corps, verification, modele)
@@ -195,12 +211,17 @@ def preparer(conn: psycopg.Connection, eid: int) -> dict:
             contact["id"],
             contact["email"],
             objet,
-            assembler(res, ident),
-            Jsonb({"retires": retires, "ok": not retires}),
+            assembler(res, ident, generique),
+            Jsonb({"retires": retires, "ok": not retires, "adresse_generique": generique}),
             modele,
         ),
     ).fetchone()
-    return {"id": row["id"], "entreprise": ent["nom_affiche"], "destinataire": contact["email"]}
+    return {
+        "id": row["id"],
+        "entreprise": ent["nom_affiche"],
+        "destinataire": contact["email"],
+        "adresse_generique": generique,
+    }
 
 
 def cibles(conn: psycopg.Connection) -> list[dict]:
@@ -247,7 +268,12 @@ def executer(conn: psycopg.Connection) -> dict:
             conn,
             "spontanee",
             f"Spontanée prête — {r['entreprise']}",
-            f"À envoyer à {r['destinataire']}.",
+            f"À envoyer à {r['destinataire']}"
+            + (
+                " (adresse générale : le mail demande de transmettre aux RH)."
+                if r["adresse_generique"]
+                else "."
+            ),
         )
     return bilan
 

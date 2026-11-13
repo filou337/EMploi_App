@@ -143,3 +143,42 @@ def test_opposition_definitive(conn):
     )
     assert agent._contact(conn, {"id": eid, "site_web": "https://acme-test.fr"}) is None
     assert not any(c["id"] == eid for c in agent.cibles(conn))
+
+
+def test_contact_general_seulement_en_secours():
+    sans_rh = "<p>Écrivez-nous : contact@acme.fr ou jean.dupont@acme.fr</p>"
+    assert contacts.adresses(sans_rh, "acme.fr") == []  # par défaut : adresses RH seulement
+    assert contacts.adresses(sans_rh, "acme.fr", generiques=True) == [
+        "contact@acme.fr"
+    ]  # jamais nominative
+
+
+def test_trouver_prefere_toujours_une_adresse_rh():
+    c = _client(
+        {
+            "/robots.txt": (200, ""),
+            "/": (200, "<p>contact@acme.fr</p>"),
+            "/contact": (200, "<p>info@acme.fr</p>"),
+        }
+    )
+    [t] = contacts.trouver("acme.fr", client=c, pause=0, secours=True)
+    assert t.email == "contact@acme.fr" and t.generique
+    assert contacts.trouver("acme.fr", client=c, pause=0) == []  # sans secours : rien
+    c2 = _client(
+        {
+            "/robots.txt": (200, ""),
+            "/": (200, "<p>contact@acme.fr</p>"),
+            "/carrieres": (200, "<p>jobs@acme.fr</p>"),
+        }
+    )
+    assert [
+        (x.email, x.generique)
+        for x in contacts.trouver("acme.fr", client=c2, pause=0, secours=True)
+    ] == [("jobs@acme.fr", False)]
+
+
+def test_mail_a_une_adresse_generale_demande_de_transmettre():
+    res = {"salutation": "Madame, Monsieur,", "paragraphes": ["Texte."], "formule": "Cordialement,"}
+    ident = {"nom": "Camille Test"}
+    assert agent.TRANSMISSION in agent.assembler(res, ident, generique=True)
+    assert agent.TRANSMISSION not in agent.assembler(res, ident)

@@ -737,7 +737,8 @@ async function vueSpontanees(v) {
     <div class="section">${brouillons.length ? brouillons.map((r) => `<div class="carte" data-id="${r.id}">
         <h3>${esc(r.entreprise)} <span class="note">→ ${esc(r.destinataire)}</span></h3>
         <p class="note">Adresse trouvée sur ${lienSur(r.source_url) ? `<a href="${lienSur(r.source_url)}" target="_blank" rel="noopener">${esc(r.source_url)}</a>` : esc(r.source_url || "—")}
-          · préparé ${depuis(r.cree_le)}${r.verification && !r.verification.ok ? " · un paragraphe retiré par le garde-fou" : ""}</p>
+          · préparé ${depuis(r.cree_le)}${r.verification && !r.verification.ok ? " · un paragraphe retiré par le garde-fou" : ""}
+          ${r.verification?.adresse_generique ? '<br><span class="etiquette ambre">adresse générale</span> aucune adresse de recrutement publiée : le mail demande de transmettre au service RH.' : ""}</p>
         <div class="formulaire"><label>Objet<input class="champ" data-champ="objet" value="${esc(r.objet)}"></label>
           <label>Message<textarea class="champ" data-champ="corps" rows="14">${esc(r.corps)}</textarea></label></div>
         <div class="actions section">
