@@ -50,6 +50,74 @@ def _structure_cv(conn: psycopg.Connection) -> dict:
     return appliquer_diplomes(cv, scoring.diplomes_obtenus())
 
 
+_NOMS_LANGUES = {
+    "francais": "Français",
+    "anglais": "Anglais",
+    "espagnol": "Espagnol",
+    "allemand": "Allemand",
+    "italien": "Italien",
+    "portugais": "Portugais",
+}
+_STAGE = re.compile(
+    r"^\s*(?:stage|stagiaire|alternance|alternant|apprenti)\s*[-–:]?\s*"
+    r"|\s*[-–(]\s*(?:stage|stagiaire|alternance)\s*\)?\s*$",
+    re.IGNORECASE,
+)
+# Niveaux qui surévaluent un profil junior : retirés s'ils ne figurent pas dans le CV.
+_NIVEAUX = (
+    (re.compile(r"\b(?:[Ee]xpert|[Ee]xperte|[Ss]pécialiste)s? (?:en|de|du|des)\s+"), "maîtrisant "),
+    (
+        re.compile(
+            r"\s*\b(?:senior|confirmée?|chevronnée?|aguerrie?|expérimentée?)\b(?:\s+et\b)?",
+            re.IGNORECASE,
+        ),
+        "",
+    ),
+)
+
+
+def corriger_cv(cv: dict, profil: dict, texte_cv: str) -> dict:
+    """Corrections par le code, d'après ton profil qui fait foi : langues, intitulés, dates, niveaux."""
+    langues = (profil.get("profil") or {}).get("langues") or {}
+    if langues:
+        cv["langues"] = [
+            {"langue": _NOMS_LANGUES.get(k.lower(), k.capitalize()), "niveau": str(v)}
+            for k, v in langues.items()
+        ]
+    fins = {k.lower(): v for k, v in (profil.get("fin_experiences") or {}).items()}
+    for e in cv.get("experiences", []):
+        e["poste"] = _STAGE.sub("", e.get("poste") or "").strip() or e.get("poste", "")
+        fin = next((v for k, v in fins.items() if k in (e.get("entreprise") or "").lower()), None)
+        if fin and (
+            not e.get("fin") or re.match(r"(?i)pr[ée]sent|aujourd|en cours|current", e["fin"])
+        ):
+            e["fin"] = fin
+    cv["accroche"] = attenuer(cv.get("accroche", ""), texte_cv)
+    return cv
+
+
+def attenuer(texte: str, texte_cv: str) -> str:
+    """Retire « expert », « senior », « confirmé »… quand ton CV ne le dit pas."""
+    bas = (texte_cv or "").lower()
+    for motif, remplacement in _NIVEAUX:
+        if motif.search(bas):
+            continue  # le CV le dit : on le garde
+
+        def remplacer(m: re.Match, r: str = remplacement, avant: str = texte) -> str:
+            debut_phrase = m.start() == 0 or avant[: m.start()].rstrip().endswith((".", "!", "?"))
+            return r.capitalize() if r and debut_phrase else r
+
+        texte = motif.sub(remplacer, texte)
+    return re.sub(r"\s{2,}", " ", texte).strip()
+
+
+def _profil() -> dict:
+    try:
+        return scoring.charger_profil()
+    except scoring.ProfilInvalide:
+        return {}
+
+
 def appliquer_diplomes(cv: dict, diplomes: dict[str, str]) -> dict:
     """{« Master Big Data » : « 2024-2026 »} -> année corrigée pour la formation qui le contient."""
     for f in cv.get("formations", []):
@@ -130,7 +198,11 @@ def _produire(
 ) -> dict:
     offre_id = offre["id"]
     cv, verif_cv, modele = adaptation.adapter_cv(cv_source, cv_masque, texte_offre, langue)
+    cv = corriger_cv(cv, _profil(), cv_masque)
     lm, verif_lm, _ = adaptation.rediger_lm(cv_masque, lm_masque, texte_offre, langue)
+    lm["paragraphes"] = [
+        attenuer(p, cv_masque + "\n" + lm_masque) for p in lm.get("paragraphes", [])
+    ]
 
     nom = _morceau(ident["nom"], 25)
     societe = _morceau(offre["entreprise"], 25)

@@ -83,3 +83,7 @@ faits:
 # Diplômes obtenus depuis le CV déposé : l'année remplace « En cours » dans les documents générés.
 diplomes_obtenus:
   "Master Data": "2024-2026"
+
+# Expériences terminées depuis le CV déposé : la date remplace « Présent » dans les CV générés.
+fin_experiences:
+  "Acme Industrie": "Août 2026"
