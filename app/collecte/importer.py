@@ -13,6 +13,7 @@ from email.utils import parsedate_to_datetime
 
 from psycopg.types.json import Jsonb
 
+from app import activite
 from app.collecte import gmail
 from app.collecte.enregistrement import enregistrer
 from app.collecte.parseurs import parseur
@@ -66,6 +67,14 @@ def importer_boite(boite: str, jours: int) -> None:
                         stats["offres_vues"] += 1
                         if not enregistrer(conn, offre, boite, m["id"], _date(m["Date"])):
                             stats["doublons"] += 1
+                        else:
+                            activite.noter(
+                                "collecte",
+                                "Offre récupérée",
+                                entreprise=offre.entreprise,
+                                intitule=offre.intitule,
+                                detail=f"alerte {offre.source}",
+                            )
                 stats["mails_lus"] += 1
             except Exception as e:  # noqa: BLE001 — un mail illisible ne bloque pas les autres
                 erreurs.append({"mail": m["id"], "erreur": f"{type(e).__name__}: {e}"})

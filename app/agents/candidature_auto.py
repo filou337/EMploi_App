@@ -18,7 +18,7 @@ import re
 
 import psycopg
 
-from app import criteres, envoi, llm, scoring
+from app import activite, criteres, envoi, llm, scoring
 from app.ats import service as ats
 from app.ats.anonymisation import verifier_masque
 from app.collecte.normalisation import contrat_depuis_intitule
@@ -279,10 +279,22 @@ def executer(conn: psycopg.Connection) -> dict:
         recente = o["entreprise_id"] and candidature_recente(conn, o["entreprise_id"])
         if recente or hors_cdi_cdd(o):
             continue
+        aid = activite.debut(
+            "candidatures_auto",
+            "Prépare CV + LM + mail",
+            offre_id=o["id"],
+            detail=f"note {float(o['score']):.0f}/100",
+        )
         try:
             r = preparer(conn, o, seuil)
             conn.commit()
+            activite.fin(
+                aid,
+                "Dossier mis de côté pour toi" if r["motif"] else "Dossier prêt à envoyer",
+                r["motif"] or "CV + LM + mail prêts, contact publié trouvé",
+            )
         except (llm.LLMIndisponible, FabricationImpossible) as e:
+            activite.fin(aid, "Dossier reporté", str(e), erreur=True)
             # Quota Gemini ou plafond de dossiers du jour : on retentera au prochain passage.
             conn.rollback()
             conn.execute(
@@ -295,6 +307,7 @@ def executer(conn: psycopg.Connection) -> dict:
                 break
             continue
         except Exception as e:  # noqa: BLE001 — une offre en échec n'arrête pas les autres
+            activite.fin(aid, "Erreur de préparation", f"{type(e).__name__}: {e}", erreur=True)
             conn.rollback()
             conn.execute(
                 "UPDATE candidatures_auto SET statut = 'erreur', erreur = %s WHERE offre_id = %s",
@@ -306,7 +319,8 @@ def executer(conn: psycopg.Connection) -> dict:
         bilan["mises de côté"] += bool(r["motif"])
     # 2. Envoyer les candidatures prêtes, dans la limite du plafond du jour.
     for a in conn.execute(
-        "SELECT a.id, e.nom_affiche AS entreprise, o.intitule FROM candidatures_auto a"
+        "SELECT a.id, a.offre_id, a.destinataire, e.nom_affiche AS entreprise, o.intitule"
+        " FROM candidatures_auto a"
         " JOIN offres o ON o.id = a.offre_id LEFT JOIN entreprises e ON e.id = o.entreprise_id"
         " WHERE a.statut = 'pret' AND a.destinataire IS NOT NULL ORDER BY a.score DESC"
     ).fetchall():
@@ -320,6 +334,12 @@ def executer(conn: psycopg.Connection) -> dict:
                 break
             continue
         bilan["envoyées"] += 1
+        activite.noter(
+            "candidatures_auto",
+            "Candidature envoyée",
+            offre_id=a["offre_id"],
+            detail=f"à {a['destinataire']} (CV + LM + portfolio)",
+        )
         notifier(conn, "info", f"Candidature envoyée — {a['entreprise']}", a["intitule"])
         conn.commit()
     return bilan

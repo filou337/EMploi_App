@@ -16,7 +16,7 @@ from datetime import UTC, datetime, timedelta
 
 import psycopg
 
-from app import criteres
+from app import activite, criteres
 from app.collecte.normalisation import cle_floue, contrat_depuis_intitule
 from app.dedup import meme_offre
 from app.fiches.ats import Poste, fiche_smartrecruiters
@@ -179,6 +179,12 @@ def _surveiller(conn: psycopg.Connection, ent: dict, crit: dict, bilan: Bilan) -
             if oid:
                 bilan.nouvelles += 1
                 nouvelles_ici += 1
+                activite.noter(
+                    "veille",
+                    "Nouvelle offre sur le site carrières",
+                    entreprise=nom,
+                    intitule=p.titre,
+                )
                 if not premier:
                     notifier(
                         conn,

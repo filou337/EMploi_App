@@ -116,6 +116,8 @@ const ROUTES = [
     return { ok: true };
   }],
   ["GET", /^rapports$/, async () => verifier(await sb.from("rapports").select("*").order("cree_le", { ascending: false }).limit(10))],
+  ["GET", /^activites$/, async () => verifier(await sb.from("v_activites").select("*")
+    .gte("cree_le", new Date(Date.now() - 2 * 864e5).toISOString()).order("cree_le", { ascending: false }).limit(80))],
   ["GET", /^journal$/, async () => verifier(await sb.from("v_journal").select("*").order("debut", { ascending: false }).limit(50))],
 
   ["GET", /^offres$/, async (_m, q) => {

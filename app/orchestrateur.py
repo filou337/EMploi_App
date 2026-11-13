@@ -18,7 +18,7 @@ from datetime import UTC, datetime
 
 from psycopg.types.json import Jsonb
 
-from app import pertinence, rapport
+from app import activite, pertinence, rapport
 from app.agents import candidature_auto, matching, suivi, veille
 from app.collecte.importer import importer_boite
 from app.config import boites_gmail, chemin_token
@@ -123,15 +123,22 @@ def passage(etapes: tuple[str, ...] = ETAPES) -> dict:
         try:
             appliquer()
             bilan = {}
+            activite.nettoyer()
             for nom in etapes:
                 debut = datetime.now(UTC)
+                aid = activite.debut(nom, "Au travail")
                 try:
                     bilan[nom] = AGENTS[nom]() or {}
                     if nom in JOURNALISES_ICI:
                         _journal(nom, debut, bilan[nom])
+                    resume = ", ".join(
+                        f"{k} {v}" for k, v in bilan[nom].items() if v not in (0, None, "")
+                    )
+                    activite.fin(aid, "Passage terminé", resume or "rien de nouveau")
                 except Exception as e:  # noqa: BLE001 — un agent en panne n'arrête pas les autres
                     bilan[nom] = {"erreur": f"{type(e).__name__}: {e}"}
                     _journal(nom, debut, {}, traceback.format_exc(limit=3))
+                    activite.fin(aid, "Erreur", f"{type(e).__name__}: {e}", erreur=True)
             qualifiees = bilan.get("matching", {}).get("qualifiées", 0)
             if qualifiees:
                 bureau(

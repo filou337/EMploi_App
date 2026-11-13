@@ -21,7 +21,7 @@ import re
 import psycopg
 from psycopg.types.json import Jsonb
 
-from app import criteres, llm, scoring
+from app import activite, criteres, llm, scoring
 from app.ats import service as ats
 from app.ats.anonymisation import verifier_masque
 from app.dedup import candidature_recente
@@ -276,6 +276,13 @@ def executer(conn: psycopg.Connection) -> dict:
             bilan["note"] = str(e)
             break
         bilan["préparées"] += 1
+        activite.noter(
+            "spontanees",
+            "Brouillon de spontanée prêt",
+            entreprise=r["entreprise"],
+            detail=f"pour {r['destinataire']}"
+            + (" (adresse générale)" if r["adresse_generique"] else ""),
+        )
         notifier(
             conn,
             "spontanee",

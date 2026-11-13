@@ -1100,6 +1100,15 @@ def rapports(conn: Conn = Depends(db)):
     ).fetchall()
 
 
+@app.get("/api/activites")
+def activites(conn: Conn = Depends(db)):
+    """Fil en direct des agents (Salon) : les 80 dernières actions sur 2 jours."""
+    return conn.execute(
+        "SELECT * FROM v_activites WHERE cree_le > now() - interval '2 days'"
+        " ORDER BY cree_le DESC LIMIT 80"
+    ).fetchall()
+
+
 @app.get("/api/journal")
 def journal(conn: Conn = Depends(db)):
     return conn.execute(

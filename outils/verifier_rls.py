@@ -36,6 +36,7 @@ TABLES = (
     "spontanees",
     "envois",
     "candidatures_auto",
+    "activites",
 )
 VUES = (
     "v_offres",
@@ -50,6 +51,7 @@ VUES = (
     "v_relances",
     "v_spontanees",
     "v_candidatures_auto",
+    "v_activites",
 )
 
 

@@ -10,7 +10,7 @@
 
 import psycopg
 
-from app import criteres, llm, scoring
+from app import activite, criteres, llm, scoring
 from app.ats import service as ats
 from app.dedup import candidature_recente
 from app.notifications import notifier
@@ -61,17 +61,26 @@ def executer(conn: psycopg.Connection) -> dict:
         (seuils["matchings_par_passage"],),
     ).fetchall()
     for o in candidates:
+        aid = activite.debut("matching", "Analyse le poste", offre_id=o["id"])
         try:
             with conn.transaction():
                 res = ats.matcher_offre(conn, o["id"])
         except llm.LLMIndisponible as e:
             bilan["note"] = str(e)  # quota épuisé : on reprendra au prochain passage
+            activite.fin(aid, "Analyse reportée", "quota Gemini atteint", erreur=True)
             break
-        except ats.AnalyseImpossible:
+        except ats.AnalyseImpossible as e:
+            activite.fin(aid, "Analyse impossible", str(e), erreur=True)
             continue
         bilan["analysées"] += 1
         grille = res.get("grille") or scoring.scorer(conn, o["id"], res["resultat"], params)
         score = grille["score"]
+        activite.fin(
+            aid,
+            "Poste analysé",
+            f"{score:.0f}/100, classe {grille['classe']}"
+            + (f" ({grille['motif']})" if grille.get("motif") else ""),
+        )
         if grille["classe"] != "A":
             continue
         recente = o["entreprise_id"] and candidature_recente(conn, o["entreprise_id"])

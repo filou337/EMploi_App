@@ -23,6 +23,7 @@ from datetime import UTC, datetime, timedelta
 from psycopg.types.json import Jsonb
 from rapidfuzz import fuzz
 
+from app import activite
 from app.collecte.normalisation import _mots, niveau, norm_entreprise, norm_intitule, norm_ville
 from app.db import connexion
 from app.entreprises import compact
@@ -337,6 +338,7 @@ def _enregistrer(conn, res: Resultat) -> None:
     )
     for v in res.verdicts:
         if v.statut == "valide":
+            activite.noter("fiches", "Fiche complète trouvée", offre_id=v.offre_id, detail=v.note)
             conn.execute(
                 """
                 UPDATE offres SET statut_validite = 'valide', fiche_complete = %s,

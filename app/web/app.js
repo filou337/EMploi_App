@@ -698,14 +698,64 @@ function filJournal(rows) {
   }).join("")}</ul>`;
 }
 
+const heure = (d) => (d ? new Date(d).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" }) : "");
+const STATUT_ACT = { en_cours: ["ambre", "en cours"], fait: ["vert", "fait"], erreur: ["rouge", "erreur"] };
+let minuterieSalon = null;
+
+function agentDe(cle) { return AGENTS[cle] || { nom: cle, role: "", c: "#627583" }; }
+function avatar(a) { return `<span class="avatar" style="background:${a.c}">${esc(a.nom.split(" ").pop()[0])}</span>`; }
+function poste(x) {
+  const morceaux = [x.entreprise, x.intitule].filter(Boolean).map(esc);
+  return morceaux.length ? `<strong>${morceaux.join(" — ")}</strong>` : "";
+}
+
+function htmlSalon(acts, journal) {
+  const recents = acts.filter((x) => Date.now() - new Date(x.cree_le) < 2 * 36e5);
+  const enCours = recents.filter((x) => x.statut === "en_cours");
+  const surPoste = enCours.filter((x) => x.action !== "Au travail");
+  const agentsActifs = new Set(enCours.map((x) => x.agent));
+  const derniere = {};
+  for (const x of acts) if (!derniere[x.agent]) derniere[x.agent] = x;
+  const bandeau = enCours.length
+    ? `<div class="carte" style="border-left:4px solid var(--teal)"><h3>En ce moment</h3><ul class="fil">${(surPoste.length ? surPoste : enCours).map((x) => {
+        const a = agentDe(x.agent);
+        return `<li>${avatar(a)}<div><strong>${esc(a.nom)}</strong> · ${esc(x.action)} ${poste(x)}
+          <div class="sous">${esc(x.detail || "")}</div></div><span class="quand">depuis ${depuis(x.cree_le)}</span></li>`;
+      }).join("")}</ul></div>`
+    : '<div class="carte"><h3>En ce moment</h3><p class="note">Aucun agent au travail. Prochain passage automatique dans l\'heure (ou bouton « Lancer la veille maintenant », onglet Veille).</p></div>';
+  const cartes = Object.entries(AGENTS).map(([cle, a]) => {
+    const d = derniere[cle], actif = agentsActifs.has(cle);
+    return `<div class="carte">${avatar(a)}<h3 style="margin-top:10px">${esc(a.nom)}
+        ${actif ? '<span class="etiquette ambre">au travail</span>' : ""}</h3><p class="note">${esc(a.role)}</p>
+      <p class="sous">${d ? `${actif ? "En cours" : "Dernière action"} : ${esc(d.action)} · ${depuis(d.cree_le)}` : "Pas encore d'activité."}</p></div>`;
+  }).join("");
+  const fil = acts.filter((x) => x.action !== "Au travail" || x.statut !== "fait").slice(0, 60);
+  return `<div class="entete"><div><h1>Le salon des agents.</h1>
+      <p>Qui travaille, sur quel poste, et ce qui a été fait : offres récupérées, fiches trouvées, postes analysés,
+      dossiers CV + LM + mail préparés, candidatures envoyées ou mises de côté. Mise à jour toutes les 10 secondes.</p></div></div>
+    ${bandeau}
+    <div class="carte section"><h3>Fil en direct</h3>${fil.length ? `<ul class="fil">${fil.map((x) => {
+        const a = agentDe(x.agent), [coul, lib] = STATUT_ACT[x.statut] || ["", x.statut];
+        return `<li>${avatar(a)}<div><strong>${esc(a.nom)}</strong> · ${esc(x.action)} ${poste(x)}
+          ${x.statut !== "fait" ? `<span class="etiquette ${coul}">${esc(lib)}</span>` : ""}
+          <div class="sous">${esc(x.detail || "")}</div></div><span class="quand">${heure(x.cree_le)}</span></li>`;
+      }).join("")}</ul>` : '<p class="vide">Rien pour l\'instant : le fil se remplit au prochain passage des agents.</p>'}</div>
+    <div class="grille section">${cartes}</div>
+    <div class="carte section"><h3>Journal des passages (30 derniers jours)</h3>${filJournal(journal)}</div>`;
+}
+
 async function vueSalon(v) {
-  const rows = await api("journal");
-  v.innerHTML = `<div class="entete"><div><h1>Le salon des agents.</h1>
-    <p>Chaque agent a une seule mission et note ce qu'il a fait. Pour l'instant ils tournent à la demande (commandes du README) ;
-    l'orchestrateur les enchaînera automatiquement à l'étape 5.</p></div></div>
-    <div class="grille">${Object.values(AGENTS).map((a) => `<div class="carte"><span class="avatar" style="background:${a.c}">${esc(a.nom.split(" ").pop()[0])}</span>
-      <h3 style="margin-top:10px">${esc(a.nom)}</h3><p class="note">${esc(a.role)}</p></div>`).join("")}</div>
-    <div class="carte section"><h3>Journal (30 derniers jours)</h3>${filJournal(rows)}</div>`;
+  const charger = async () => {
+    const [acts, journal] = await Promise.all([api("activites").catch(() => []), api("journal")]);
+    if (location.hash.split("?")[0] !== "#salon") return;
+    v.innerHTML = htmlSalon(acts, journal);
+  };
+  await charger();
+  clearInterval(minuterieSalon);
+  minuterieSalon = setInterval(() => {
+    if (location.hash.split("?")[0] !== "#salon" || document.hidden) return;
+    charger().catch(() => {});
+  }, 10000);
 }
 
 // --- Candidatures spontanées ----------------------------------------------------------------------
@@ -1127,6 +1177,7 @@ async function majBadge() {
 
 async function router() {
   const nom = location.hash.slice(1).split("?")[0] || "tableau";
+  if (nom !== "salon") clearInterval(minuterieSalon);
   const vue = VUES[nom] || vueTableau;
   document.querySelectorAll("#nav a").forEach((a) => a.classList.toggle("actif", a.getAttribute("href") === `#${nom}`));
   const v = $("#vue");
