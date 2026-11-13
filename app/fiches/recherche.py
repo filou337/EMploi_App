@@ -14,6 +14,7 @@ Aucune page LinkedIn ou Indeed n'est consultée.
 """
 
 import argparse
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -35,6 +36,7 @@ from app.fiches.ats import (
 from app.pertinence import est_data
 from app.validite import marquer_anciennes
 
+BUDGET_SITES_SECONDES = 120  # recherche sur les sites carrières, par employeur
 SEUIL_TROUVEE = 85  # similarité d'intitulé pour dire « c'est la même offre »
 SEUIL_ABSENTE = 60  # en dessous, aucun poste ne ressemble : l'offre n'est plus publiée
 DELAI_NOUVEL_ESSAI = timedelta(days=30)
@@ -167,8 +169,11 @@ def _trouver_tableau(
             t = connecteur(s)
             if t is not None and t.postes and est_son_site(t, nom):
                 return t
-    # Pas d'ATS public : offres JobPosting publiées sur le site de l'employeur.
+    # Pas d'ATS public : offres JobPosting publiées sur le site de l'employeur (2 min au plus).
+    fin = time.monotonic() + BUDGET_SITES_SECONDES
     for site, devinee in sites or []:
+        if time.monotonic() > fin:
+            break
         t = jobposting.tableau(site, indices=indices)
         if t is None or not t.postes:
             continue

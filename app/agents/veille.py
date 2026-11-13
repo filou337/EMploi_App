@@ -12,6 +12,7 @@ Premier passage sur une entreprise : un seul résumé, pas une notification par 
 
 import hashlib
 from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 
 import psycopg
 
@@ -21,6 +22,10 @@ from app.dedup import meme_offre
 from app.fiches.ats import Poste, fiche_smartrecruiters
 from app.fiches.recherche import _trouver_tableau, sites_employeur
 from app.notifications import notifier
+
+REESSAI_SANS_SITE = timedelta(
+    days=7
+)  # employeur sans site lisible : nouvelle recherche après 7 jours
 
 
 def empreinte(p: Poste) -> str:
@@ -71,6 +76,11 @@ class Bilan:
 
 def _surveiller(conn: psycopg.Connection, ent: dict, crit: dict, bilan: Bilan) -> str:
     nom = ent["nom_affiche"] or ent["nom_norm"]
+    verifie = ent.get("ats_verifie_le")
+    if ent["ats"] == "aucun" and verifie and datetime.now(UTC) - verifie < REESSAI_SANS_SITE:
+        # Aucun site lisible trouvé récemment : on ne refait pas toute la recherche à chaque passage.
+        bilan.sans_ats.append(nom)
+        return "pas de site carrières lisible : abonne-toi à ses alertes officielles (Gmail)"
     tableau = _trouver_tableau(
         nom, ent["ats"], ent["ats_slug"], sites_employeur(conn, {**ent, "id": ent["entreprise_id"]})
     )
@@ -233,7 +243,7 @@ def executer(conn: psycopg.Connection) -> dict:
     for ent in conn.execute(
         """
         SELECT v.id, v.entreprise_id, v.derniere_veille, e.nom_affiche, e.nom_norm, e.ats, e.ats_slug,
-               e.site_carrieres, e.site_web
+               e.site_carrieres, e.site_web, e.ats_verifie_le
         FROM veille_entreprises v JOIN entreprises e ON e.id = v.entreprise_id
         WHERE v.active ORDER BY v.derniere_veille NULLS FIRST
         """
