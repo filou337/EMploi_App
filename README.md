@@ -49,8 +49,7 @@ cp profil/competences.exemple.yaml profil/competences.yaml
 pytest
 ```
 
-**Ouvrir l'appli :** `python -m app` (ou `outils/lancer.sh`). La base démarre si besoin, les migrations
-s'appliquent, puis le tableau de bord s'ouvre sur http://127.0.0.1:8765 (accessible depuis ce PC seulement).
+**Ouvrir l'appli :** avec `outils/installer_appli.sh`, l'appli tourne en permanence (service `emploi-app`, démarré avec ta session) sur http://127.0.0.1:8765, accessible depuis ce PC seulement ; `outils/lancer.sh` ouvre simplement le navigateur. Sans le service : `python -m app` applique les migrations puis ouvre le tableau de bord. Après une mise à jour du code : `systemctl --user restart emploi-app emploi-travailleur`.
 Raccourci de bureau : `sed "s#/chemin/vers/EMploi_App#$PWD#" outils/EMploi_App.desktop > ~/.local/share/applications/EMploi_App.desktop`, ou dans Chrome
 ⋮ → *Installer EMploi_App* (appli installable, PWA).
 
@@ -69,7 +68,7 @@ par la file `demandes`, exécutée par le travailleur dès que le PC est allumé
 | Étape | Commande |
 |---|---|
 | Migrer la base locale vers Supabase | `python -m app.vers_supabase` (`--verifier` pour tester la connexion) |
-| Travailleur permanent du PC | `outils/installer_appli.sh` (service `emploi-travailleur`) |
+| Appli locale + travailleur permanents | `outils/installer_appli.sh` (services `emploi-app` et `emploi-travailleur`) |
 | Publier l'interface + QR code | `outils/publier.sh "message"` (`-n` : essai à blanc) |
 
 Commandes utiles :
