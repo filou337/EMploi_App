@@ -72,11 +72,15 @@ tu ne l'ajoutes pas : tu mets en avant ce qui s'en rapproche réellement.
 À produire :
 - titre : intitulé visé, proche de celui de l'offre, compatible avec le profil (ex. « Analytics
   Engineer junior »). Pas de niveau supérieur à celui du CV.
-- accroche : 2 à 3 phrases (45 à 70 mots), qui reprennent les mots-clés de l'offre RÉELLEMENT
-  présents dans le CV, sans « je souhaite rejoindre votre équipe ». Ouvre sur le titre visé et la
-  valeur du candidat (ex. « Analytics Engineer junior, … »), jamais sur « actuellement en stage » ni
-  « étudiant » : appuie-toi sur les « Faits validés par le candidat » s'ils sont fournis (diplôme
-  obtenu, nombre de missions, méthodes).
+- accroche : 3 phrases (55 à 80 mots), taillées pour CETTE entreprise et CE poste :
+  (a) le titre visé et la valeur du candidat (ex. « Analytics Engineer junior, diplômé… »), jamais
+      « actuellement en stage » ni « étudiant » ; appuie-toi sur les « Faits validés par le
+      candidat » s'ils sont fournis (diplôme obtenu, nombre de missions, méthodes) ;
+  (b) 2 à 4 compétences techniques (hard skills) que l'offre DEMANDE et que le CV contient, nommées
+      avec les mots exacts de l'offre (ex. « SQL », « Power BI ») et leur usage ;
+  (c) 1 à 2 qualités (soft skills) que l'offre demande et que le CV ou les faits démontrent, puis
+      ce que le candidat apportera à l'entreprise (son activité, son enjeu data tiré de l'offre).
+  Sans « je souhaite rejoindre votre équipe ».
 - competences : 3 à 5 catégories, des plus utiles pour l'offre aux moins utiles. Chaque élément est
   UNE compétence concrète (outil, langage, méthode : « SQL », « Power BI », « DAX »), jamais un
   regroupement (« Langages de traitement », « Data Visualization »). « libelle » = ce terme (traduit
@@ -88,7 +92,7 @@ tu ne l'ajoutes pas : tu mets en avant ce qui s'en rapproche réellement.
   effet. Chaque puce cite « source » = index (à partir de 0) de la mission d'origine qu'elle
   reformule. Mets d'abord les puces qui répondent aux missions de l'offre. Garde les chiffres exacts.
 - formations : toutes, avec leur « index » et le diplôme (traduit si besoin).
-- qualites : 2 à 4 qualités tirées du CV.
+- qualites : 2 à 4 qualités tirées du CV, en priorité celles que l'offre demande (mêmes mots).
 - mots_cles_offre_repris : les mots-clés de l'offre que tu as pu reprendre honnêtement."""
 
 SCHEMA_LM = _objet(

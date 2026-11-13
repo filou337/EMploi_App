@@ -1,4 +1,4 @@
-from app.generation.fabrique import appliquer_diplomes, attenuer, corriger_cv
+from app.generation.fabrique import appliquer_diplomes, attenuer, corriger_cv, meilleur_essai
 
 PROFIL = {
     "profil": {"langues": {"francais": "C2", "anglais": "B2", "espagnol": "A2"}},
@@ -43,3 +43,30 @@ def test_diplome_obtenu():
         appliquer_diplomes(cv, {"Master Data": "2025-2026"})["formations"][0]["annee"]
         == "2025-2026"
     )
+
+
+def _essais(*scores):
+    restants = list(scores)
+    appels = []
+
+    def rediger():
+        appels.append(1)
+        return {"matching": {"score_matching": restants.pop(0)}, "essais": 1}
+
+    return rediger, appels
+
+
+def test_seconde_redaction_si_le_cv_adapte_matche_moins_bien():
+    rediger, appels = _essais(68.9, 79.0)
+    e = meilleur_essai(75.3, rediger)
+    assert len(appels) == 2 and e["matching"]["score_matching"] == 79.0 and e["essais"] == 2
+
+
+def test_pas_de_seconde_redaction_si_c_est_bon():
+    rediger, appels = _essais(74.0)
+    assert meilleur_essai(75.3, rediger)["essais"] == 1 and len(appels) == 1  # écart < 2 points
+
+
+def test_on_garde_le_premier_si_le_second_est_pire():
+    rediger, _ = _essais(70.0, 65.0)
+    assert meilleur_essai(75.3, rediger)["matching"]["score_matching"] == 70.0

@@ -193,17 +193,26 @@ def fabriquer(conn: psycopg.Connection, offre_id: int, langue: str | None = None
         raise
 
 
-def _produire(
-    conn, fab_id, offre, texte_offre, langue, ident, cv_source, cv_masque, lm_masque, seuils
-) -> dict:
-    offre_id = offre["id"]
+def meilleur_essai(origine: float, rediger) -> dict:
+    """Gemini ne rédige pas deux fois pareil : si le CV adapté matche moins bien que l'original,
+    on refait une rédaction et on garde la meilleure des deux."""
+    essai = rediger()
+    if essai["matching"]["score_matching"] < origine - TOLERANCE_MATCHING:
+        second = rediger()
+        if second["matching"]["score_matching"] > essai["matching"]["score_matching"]:
+            essai = second
+        essai["essais"] = 2
+    return essai
+
+
+def _rediger_et_relire(offre, texte_offre, langue, ident, cv_source, cv_masque, lm_masque) -> dict:
+    """Une rédaction complète (CV + LM), rendue en PDF/DOCX puis relue comme un ATS."""
     cv, verif_cv, modele = adaptation.adapter_cv(cv_source, cv_masque, texte_offre, langue)
     cv = corriger_cv(cv, _profil(), cv_masque)
     lm, verif_lm, _ = adaptation.rediger_lm(cv_masque, lm_masque, texte_offre, langue)
     lm["paragraphes"] = [
         attenuer(p, cv_masque + "\n" + lm_masque) for p in lm.get("paragraphes", [])
     ]
-
     nom = _morceau(ident["nom"], 25)
     societe = _morceau(offre["entreprise"], 25)
     fichiers = {
@@ -216,7 +225,6 @@ def _produire(
         (t, f): f"{'CV' if t == 'cv' else 'LM'}_{nom}_{societe}_{langue.upper()}.{f}"
         for t, f in fichiers
     }
-
     # Relecture du CV produit, comme un ATS : texte extrait du PDF, compatibilité, matching.
     lecture = documents.lire(noms[("cv", "pdf")], fichiers[("cv", "pdf")])
     diag = documents.diagnostic(lecture, "cv")
@@ -226,7 +234,36 @@ def _produire(
         cv_produit_masque, [ident.get("nom"), ident.get("email"), ident.get("telephone")]
     )
     matching, _ = moteur.matcher(cv_produit_masque, texte_offre)
+    return {
+        "cv": cv,
+        "verif_cv": verif_cv,
+        "modele": modele,
+        "lm": lm,
+        "verif_lm": verif_lm,
+        "fichiers": fichiers,
+        "noms": noms,
+        "diag": diag,
+        "compat": compat,
+        "matching": matching,
+        "essais": 1,
+    }
+
+
+def _produire(
+    conn, fab_id, offre, texte_offre, langue, ident, cv_source, cv_masque, lm_masque, seuils
+) -> dict:
+    offre_id = offre["id"]
     origine = ats.matcher_offre(conn, offre_id)["score_matching"]  # en cache si déjà calculé
+    essai = meilleur_essai(
+        float(origine),
+        lambda: _rediger_et_relire(
+            offre, texte_offre, langue, ident, cv_source, cv_masque, lm_masque
+        ),
+    )
+    cv, verif_cv, modele = essai["cv"], essai["verif_cv"], essai["modele"]
+    lm, verif_lm = essai["lm"], essai["verif_lm"]
+    fichiers, noms, diag = essai["fichiers"], essai["noms"], essai["diag"]
+    compat, matching = essai["compat"], essai["matching"]
 
     motifs = []
     if compat["score"] < seuils["ats_friendly_min"]:
@@ -235,10 +272,12 @@ def _produire(
         motifs.append(
             f"matching {matching['score_matching']} inférieur au CV d'origine ({origine})"
         )
-    retires = verif_cv["retires"] + verif_lm["retires"]
+    # Une compétence non prouvée retirée laisse un document juste : on le note sans bloquer.
+    # Une phrase retirée (accroche, puce, paragraphe) peut casser le texte : à relire.
+    retires = [r for r in verif_cv["retires"] + verif_lm["retires"] if r.get("ou") != "compétence"]
     if retires:
         motifs.append(
-            f"{len(retires)} élément(s) retiré(s) par le garde-fou de véracité : à relire"
+            f"{len(retires)} phrase(s) retirée(s) par le garde-fou de véracité : à relire"
         )
     statut = "a_revoir" if motifs else "ats_friendly"
 
@@ -256,6 +295,7 @@ def _produire(
             k: matching.get(k)
             for k in ("score_matching", "detail_score", "mots_cles_manquants", "synthese")
         },
+        "essais": essai["essais"],
         "motifs": motifs,
         "dossier": dossier,
     }
