@@ -76,7 +76,9 @@ async function vueTableau(v) {
   const cv = r.documents.find((d) => d.type === "cv");
   const semaines = r.semaines;
   const max = Math.max(1, ...semaines.map((s) => s.n));
+  const rappel = await rappelGuide();
   v.innerHTML = `
+    ${rappel}
     ${etatPC(r.pc)}
     <div class="entete"><div><h1>Ta recherche, en un coup d'œil.</h1>
       <p>Données réelles de ta boîte Gmail et des sites carrières, mises à jour à chaque passage des agents.</p></div>
@@ -915,6 +917,82 @@ async function vueEnvoisAuto(v) {
   };
 }
 
+// --- Guide : les clics pour que l'automatisation marche ----------------------------------------
+async function etapesGuide() {
+  const [docs, params, env, journal, spont, relances, arep] = await Promise.all([
+    api("documents").catch(() => []), api("parametres").catch(() => ({})), api("envoi").catch(() => ({})),
+    api("journal").catch(() => []), api("spontanees").catch(() => []), api("relances").catch(() => []),
+    api("reponses?a_confirmer=true").catch(() => []),
+  ]);
+  const id = params.identite || {}, crit = params.criteres || {};
+  const exclus = (crit.contrats_exclus || []).map((x) => String(x).toLowerCase());
+  const passage = journal.find((x) => x.tache === "matching" || x.tache === "collecte");
+  const recent = passage && Date.now() - new Date(passage.fin || passage.debut) < 3 * 36e5;
+  return [
+    { titre: "Déposer ton CV par défaut", vue: "documents", bouton: "Onglet CV & lettre",
+      fait: docs.some((d) => d.type === "cv" && d.par_defaut),
+      aide: "Dépose ton CV à jour (PDF) et clique « Utiliser » : c'est la base de tous les CV adaptés." },
+    { titre: "Déposer ta lettre de référence", vue: "documents", bouton: "Onglet CV & lettre",
+      fait: docs.some((d) => d.type === "lm" && d.par_defaut),
+      aide: "Ta LM générique : elle donne le ton et la structure de toutes les lettres générées." },
+    { titre: "Vérifier tes coordonnées", vue: "documents", bouton: "Onglet CV & lettre",
+      fait: Boolean(id.nom && id.email && id.telephone),
+      aide: "Nom, mail, téléphone, ville, LinkedIn, portfolio : imprimés sur les CV et LM (jamais envoyés à l'IA)." },
+    { titre: "Régler tes critères de recherche", vue: "veille", bouton: "Onglet Veille",
+      fait: (crit.postes || []).length > 0 && exclus.includes("stage") && exclus.includes("alternance")
+        && !exclus.includes("cdi") && !exclus.includes("cdd"),
+      aide: "Postes visés, lieux, et « Contrats à EXCLURE » = stage, alternance, freelance, interim (jamais CDI ni CDD)." },
+    { titre: "Lancer un passage des agents", vue: "veille", bouton: "Onglet Veille → « Lancer la veille maintenant »",
+      fait: Boolean(recent),
+      aide: "Les agents tournent seuls toutes les heures ; ce bouton lance un passage tout de suite." },
+    { titre: "Regarder les agents travailler", vue: "salon", bouton: "Onglet Salon",
+      fait: Boolean(passage),
+      aide: "Fil en direct : offres récupérées, postes analysés, dossiers préparés, candidatures envoyées." },
+    { titre: "Traiter les relances et les réponses", vue: "candidatures", bouton: "Onglet Candidatures",
+      fait: relances.length === 0 && arep.length === 0,
+      aide: `${relances.length} relance(s) due(s), ${arep.length} réponse(s) à confirmer (onglet Réponses).` },
+    { titre: "Autoriser l'envoi depuis Gmail (une fois, sur le PC)", vue: null, bouton: null,
+      fait: Boolean(env.autorise),
+      aide: "Sur le PC : python -m app.envoi --autoriser, puis cocher « Envoyer des e-mails en votre nom »." },
+    { titre: "Activer l'envoi en 1 clic", vue: "spontanees", bouton: "Onglet Spontanées",
+      fait: Boolean(env.actif),
+      aide: "Ajoute le bouton « Envoyer depuis Gmail » aux brouillons et aux relances (chaque envoi sur ton clic)." },
+    { titre: "Ajouter des cibles de candidatures spontanées", vue: "spontanees", bouton: "Onglet Spontanées",
+      fait: spont.length > 0,
+      aide: "Entreprise + site web : l'agent trouve l'adresse de recrutement et prépare le mail." },
+    { titre: "Activer l'envoi automatique des candidatures", vue: "auto", bouton: "Onglet Envois auto",
+      fait: Boolean(env.auto),
+      aide: "Offres notées 50 à 84 : CV + LM + mail envoyés seuls (10/jour). 85 et plus : mis de côté pour toi." },
+    { titre: "Relire les premiers envois", vue: "auto", bouton: "Onglet Envois auto",
+      fait: false, optionnel: true,
+      aide: "Lis les 2-3 premiers mails partis et les dossiers mis de côté ; coupe l'interrupteur si besoin." },
+  ];
+}
+
+async function vueGuide(v) {
+  const etapes = await etapesGuide();
+  const obligatoires = etapes.filter((e) => !e.optionnel), faites = obligatoires.filter((e) => e.fait).length;
+  v.innerHTML = `<div class="entete"><div><h1>Guide de démarrage.</h1>
+      <p>Les clics, dans l'ordre, pour que l'automatisation marche. Chaque étape se coche toute seule quand elle est faite.</p></div>
+      <div class="kpi carte"><div class="valeur">${faites}/${obligatoires.length}</div><div class="libelle">étapes faites</div></div></div>
+    <ol class="liste guide">${etapes.map((e, n) => `<li class="carte">
+        <div style="display:flex;gap:12px;align-items:flex-start">
+          <span class="etiquette ${e.fait ? "vert" : e.optionnel ? "" : "ambre"}" style="min-width:64px;text-align:center">${e.fait ? "✓ fait" : e.optionnel ? "conseil" : "à faire"}</span>
+          <div style="flex:1"><strong>${n + 1}. ${esc(e.titre)}</strong><p class="note">${esc(e.aide)}</p></div>
+          ${e.vue ? `<a class="bouton petit ${e.fait ? "" : "principal"}" href="#${e.vue}">${esc(e.bouton.split(" → ")[0].replace("Onglet ", ""))}</a>` : ""}
+        </div></li>`).join("")}</ol>`;
+}
+
+async function rappelGuide() {
+  try {
+    const etapes = (await etapesGuide()).filter((e) => !e.optionnel);
+    const reste = etapes.filter((e) => !e.fait);
+    if (!reste.length) return "";
+    return `<div class="carte" style="border-left:4px solid var(--teal)"><strong>Guide de démarrage : ${etapes.length - reste.length}/${etapes.length} étapes faites.</strong>
+      <span class="note">Prochaine : ${esc(reste[0].titre)}.</span> <a href="#guide">Ouvrir le guide →</a></div>`;
+  } catch { return ""; }
+}
+
 // --- Rapport (tous les 3 jours) -----------------------------------------------------------------
 const CLASSEMENT = { positive: ["vert", "positive"], negative: ["rouge", "refus"], neutre: ["", "neutre"] };
 
@@ -1165,7 +1243,7 @@ sudo tailscale set --operator=$USER</pre></li>
 
 // --- Navigation ---------------------------------------------------------------------------------
 const VUES = { telephone: vueTelephone, tableau: vueTableau, pipeline: vuePipeline, veille: vueVeille, offres: vueOffres, candidatures: vueCandidatures, reponses: vueReponses,
-  documents: vueDocuments, salon: vueSalon, rapport: vueRapport, spontanees: vueSpontanees, auto: vueEnvoisAuto };
+  documents: vueDocuments, salon: vueSalon, rapport: vueRapport, spontanees: vueSpontanees, auto: vueEnvoisAuto, guide: vueGuide };
 
 async function majBadge() {
   try {
