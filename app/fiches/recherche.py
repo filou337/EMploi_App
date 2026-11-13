@@ -14,6 +14,7 @@ Aucune page LinkedIn ou Indeed n'est consultée.
 """
 
 import argparse
+import re
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
@@ -82,7 +83,11 @@ def similarite_titre(intitule: str, poste: Poste) -> int:
     """Similarité des intitulés (0 à 100) ; 0 si le niveau (junior, stage…) diffère."""
     if niveau(intitule) != niveau(poste.titre):
         return 0
-    return round(fuzz.token_sort_ratio(norm_intitule(intitule), norm_intitule(poste.titre)))
+    # Sites carrières : « Intitulé - Filière - Lieu » ; on compare aussi l'intitulé seul.
+    variantes = {poste.titre, re.split(r"\s+[-–|]\s+", poste.titre)[0]}
+    return max(
+        round(fuzz.token_sort_ratio(norm_intitule(intitule), norm_intitule(v))) for v in variantes
+    )
 
 
 def meme_ville(ville: str, poste: Poste) -> bool:

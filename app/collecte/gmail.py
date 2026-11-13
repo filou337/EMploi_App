@@ -57,8 +57,25 @@ def identifiants(boite: str = "principale") -> Credentials:
     flow = InstalledAppFlow.from_client_secrets_file(str(secret), SCOPES)
     print(f"Autorisation de la boîte « {boite} » : choisis le compte Google correspondant.")
     creds = flow.run_local_server(port=0, open_browser=True, prompt="select_account")
+    _verifier_compte_unique(boite, creds)
     _sauver(creds, token)
     return creds
+
+
+def _verifier_compte_unique(boite: str, creds: Credentials) -> None:
+    """Refuse d'enregistrer une boîte sur un compte déjà utilisé par une autre boîte."""
+    from app.config import boites_gmail
+
+    email = build("gmail", "v1", credentials=creds, cache_discovery=False)
+    email = email.users().getProfile(userId="me").execute()["emailAddress"].lower()
+    for autre in boites_gmail():
+        if autre == boite or not chemin_token(autre).exists():
+            continue
+        if adresse(service(autre)).lower() == email:
+            raise RuntimeError(
+                f"Le compte {email} est déjà celui de la boîte « {autre} » : rien n'est enregistré."
+                f" Relance et choisis l'autre compte pour « {boite} »."
+            )
 
 
 def service(boite: str = "principale"):

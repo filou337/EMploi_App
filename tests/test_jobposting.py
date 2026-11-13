@@ -169,3 +169,16 @@ def test_pages_francaises_et_data_d_abord():
         "https://acme.com/fr/jobs/paris/comptable-4",
     ]
     assert sorted(urls, key=jp._priorite) == [urls[2], urls[3], urls[1], urls[0]]
+
+
+def test_intitule_avec_filiere_et_lieu():
+    p = recherche.Poste(
+        "Data Analyst Pilotage des Notations - Innovation / Digital - La Defense, Ile de France, France",
+        "La Defense, France",
+        "u",
+        None,
+        "",
+    )
+    assert recherche.similarite_titre("Data Analyst Pilotage des Notations", p) == 100
+    stage = recherche.Poste("Data Analyst - Stage", "Paris", "u", None, "")
+    assert recherche.similarite_titre("Data Analyst", stage) == 0  # le niveau reste contrôlé

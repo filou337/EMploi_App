@@ -81,7 +81,9 @@ def autoriser(conn: psycopg.Connection) -> str:
     flow = InstalledAppFlow.from_client_secrets_file(str(chemin_client_secret()), SCOPES)
     print(f"Autorisation d'ENVOI : choisis le compte {attendu} dans le navigateur,", flush=True)
     print("puis COCHE la case « Envoyer des e-mails en votre nom ».", flush=True)
-    creds = flow.run_local_server(port=0, open_browser=True, prompt="select_account consent")
+    creds = flow.run_local_server(
+        port=0, open_browser=True, prompt="select_account consent", login_hint=attendu
+    )
     if SCOPES[0] not in (creds.granted_scopes or creds.scopes or []):
         raise EnvoiImpossible(
             "La case « Envoyer des e-mails en votre nom » n'a pas été cochée : rien n'est enregistré."
