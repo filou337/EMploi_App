@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Règles de confidentialité — EMploi_App</title>
+<meta name="theme-color" content="#173448">
+<link rel="icon" href="icones/favicon.png">
+<link rel="stylesheet" href="fonts.css">
+<style>
+  :root { --navy: #173448; --teal: #087f8c; --paper: #f5f7f8; --ink: #243b4a; --muted: #5d7180; --line: #dbe3e7; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--paper); color: var(--ink); font: 16px/1.65 'JMI Sans', system-ui, sans-serif; }
+  header { background: var(--navy); color: #fff; padding: 18px 16px; }
+  header a { color: #fff; text-decoration: none; font-family: 'JMI Editorial', Georgia, serif; font-size: 21px; }
+  main { max-width: 760px; margin: 0 auto; padding: 32px 16px 64px; }
+  h1 { font-family: 'JMI Editorial', Georgia, serif; font-weight: 400; color: var(--navy); font-size: 32px; margin: 0 0 6px; }
+  h2 { color: var(--navy); font-size: 18px; margin: 32px 0 8px; }
+  p, li { margin: 0 0 10px; }
+  ul { padding-left: 20px; }
+  .maj { color: var(--muted); font-size: 14px; margin-bottom: 24px; }
+  a { color: var(--teal); }
+  table { width: 100%; border-collapse: collapse; font-size: 15px; margin: 8px 0 16px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--navy); }
+  @media (max-width: 560px) { h1 { font-size: 26px; } th, td { padding: 6px 4px; } }
+</style>
+</head>
+<body>
+<header><a href="./">EMploi<span style="color:#7fd1c7">_App</span></a></header>
+<main>
+  <h1>Règles de confidentialité</h1>
+  <p class="maj">Dernière mise à jour : 13 novembre 2026</p>
+
+  <p>EMploi_App est un <strong>outil personnel</strong> de recherche d'emploi, utilisé par une seule personne :
+  son auteur. Il n'est ni vendu ni proposé au public, et n'a pas d'autres utilisateurs.
+  Le code est publié en open source sur <a href="https://github.com/filou337/EMploi_App">GitHub</a> ;
+  les données, elles, restent privées.</p>
+
+  <h2>Données Google utilisées</h2>
+  <table>
+    <tr><th>Accès demandé</th><th>Usage</th></tr>
+    <tr><td>Gmail, lecture seule<br><code>gmail.readonly</code></td>
+        <td>Lire les alertes d'offres d'emploi (LinkedIn, Indeed, Welcome to the Jungle…) et les échanges
+        liés aux candidatures (accusés de réception, réponses, refus), pour tenir à jour le suivi.</td></tr>
+    <tr><td>Gmail, envoi<br><code>gmail.send</code></td>
+        <td>Envoyer, au nom de l'utilisateur, ses propres candidatures et relances : uniquement lorsqu'il l'a
+        activé, dans une limite quotidienne, chaque envoi étant journalisé.</td></tr>
+    <tr><td>Adresse du compte<br><code>openid</code>, <code>userinfo.email</code></td>
+        <td>Vérifier que l'envoi est autorisé depuis le bon compte.</td></tr>
+  </table>
+  <p>L'outil ne lit pas les autres mails au-delà de ce qui est nécessaire pour reconnaître une alerte ou une
+  candidature, ne modifie ni ne supprime aucun mail, et n'accède à aucun contact ni à aucun autre service Google.</p>
+
+  <h2>Ce qui est conservé</h2>
+  <ul>
+    <li>Les offres repérées (intitulé, entreprise, lieu, lien, texte de l'offre) et leur évaluation.</li>
+    <li>Le suivi des candidatures : dates, statut, objet des mails de réponse.</li>
+    <li>Les documents de l'utilisateur (CV, lettre de motivation) et ceux générés pour une offre.</li>
+    <li>Des adresses de recrutement publiques d'entreprises, avec la page où elles ont été trouvées.</li>
+  </ul>
+  <p>Le contenu complet des mails n'est pas conservé. Les données sont stockées dans une base
+  <strong>Supabase</strong> privée (hébergement européen), protégée par authentification et par des règles
+  d'accès ligne à ligne : seul le compte de l'utilisateur peut les lire. Les clés et jetons d'accès sont
+  conservés chiffrés et ne sont jamais publiés.</p>
+
+  <h2>Services tiers</h2>
+  <ul>
+    <li><strong>Google Gemini</strong> : analyse des offres et rédaction des documents. Les textes envoyés sont
+    <strong>anonymisés</strong> au préalable (nom, adresse mail, téléphone, adresse et liens masqués) ; un
+    contrôle bloque l'envoi s'il reste une coordonnée.</li>
+    <li><strong>Supabase</strong> : stockage de la base de données.</li>
+    <li><strong>GitHub</strong> : hébergement du code, de cette page et de l'exécution planifiée des agents.</li>
+  </ul>
+  <p>Aucune donnée n'est vendue, louée ni utilisée à des fins publicitaires. L'usage des données obtenues
+  via les API Google respecte la <a href="https://developers.google.com/terms/api-services-user-data-policy">politique
+  relative aux données utilisateur des services d'API Google</a>, y compris ses exigences d'usage limité.</p>
+
+  <h2>Personnes contactées</h2>
+  <p>Seules des adresses professionnelles publiées par les entreprises pour le recrutement (ou, à défaut, leur
+  adresse de contact générale) sont utilisées, jamais d'adresse devinée. Toute personne peut demander à ne plus
+  être contactée : sa demande est enregistrée et respectée définitivement.</p>
+
+  <h2>Conservation et suppression</h2>
+  <p>Les données ne sont conservées que le temps de la recherche d'emploi. L'accès de l'outil à Gmail peut être
+  retiré à tout moment depuis <a href="https://myaccount.google.com/permissions">les autorisations du compte
+  Google</a> ; les données associées sont alors supprimées de la base sur demande.</p>
+
+  <h2>Contact</h2>
+  <p>Pour toute question ou demande (accès, rectification, suppression, opposition) : ouvrir un ticket sur
+  <a href="https://github.com/filou337/EMploi_App/issues">github.com/filou337/EMploi_App</a>.</p>
+</main>
+</body>
+</html>
