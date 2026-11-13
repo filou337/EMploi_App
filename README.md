@@ -119,7 +119,7 @@ Gmail : plusieurs boîtes sont lues (`GMAIL_BOITES=principale,ancienne` dans `.e
 Chaque mail d'alerte déclenche les étapes 1 à 6 dans la minute. Les étapes 7 et 8 tournent selon un planning.
 
 1. **Collecte** : Pub/Sub prévient Cloud Run, le service lit les nouveaux mails des expéditeurs autorisés (WTTJ, France Travail, Jobrapido, LinkedIn, APEC) et extrait entreprise, intitulé, lieu, lien et extrait. Un passage horaire rattrape les notifications perdues.
-2. **Fiche complète et validité** : la fiche est cherchée chez l'employeur (Greenhouse, Lever, SmartRecruiters, Workday) ou via une API autorisée (Adzuna). Les pages des plateformes d'alerte ne sont pas téléchargées. L'offre est rejetée en cas de 404, si elle est pourvue ou si elle a plus de 21 jours.
+2. **Fiche complète et validité** : la fiche est cherchée chez l'employeur, sur son ATS public (Greenhouse, Lever, SmartRecruiters, Ashby, Recruitee) ou sur son site carrières (bloc schema.org JobPosting : plans du site, sous-domaines careers./recrutement./jobs., robots.txt respecté, 25 pages et 45 s au plus par site), ou via une API autorisée (Adzuna). Les pages des plateformes d'alerte ne sont pas téléchargées. L'offre est rejetée en cas de 404, si elle est pourvue ou si elle a plus de 21 jours.
 3. **Déduplication** : même URL, même offre publiée ailleurs (similarité ≥ 90 % avec `rapidfuzz`), ou candidature chez la même entreprise il y a moins de 3 mois.
 4. **Extraction et scoring** : un pré-filtre par mots-clés, puis le LLM extrait les critères en JSON et note la grille.
 5. **Génération** (score ≥ 85) : CV et lettre adaptés, rendus en PDF puis déposés dans Drive.
@@ -152,7 +152,7 @@ Postgres est au centre. Le pipeline y écrit à chaque étape, et le bouton « J
 | Déclencheur temps réel | Gmail API `users.watch` + Google Pub/Sub |
 | Service de traitement | Python 3.12 + FastAPI sur Cloud Run |
 | Tâches planifiées | Cloud Scheduler |
-| Sources complémentaires | Sites carrières / ATS (Greenhouse, Lever, SmartRecruiters, Workday), API Adzuna |
+| Sources complémentaires | ATS publics (Greenhouse, Lever, SmartRecruiters, Ashby, Recruitee), sites carrières via schema.org JobPosting (`app/fiches/jobposting.py`), API Adzuna |
 | Lecture des offres | `httpx` + `trafilatura`, Playwright en secours |
 | Base de données | Postgres (Supabase) |
 | Déduplication floue | `rapidfuzz` |
@@ -229,7 +229,7 @@ Moyenne pondérée sur 100, avec une justification obligatoire pour chaque crit�
 Sept étapes d'environ une semaine chacune. Chacune livre quelque chose d'utilisable.
 
 - [x] **1. Collecte et base** : schéma Postgres ✅, parseurs LinkedIn, Indeed et WTTJ (sélections « jobs du mois ») ✅, import des 30 derniers jours ✅. France Travail, APEC, Jobrapido : parseurs à écrire dès réception d'alertes
-- [x] **2. Validité et déduplication** : doublons flous ✅, fraîcheur 21 jours ✅, garde-fou 3 mois ✅, import des candidatures ✅ (deux boîtes), fiche complète via Greenhouse, Lever, SmartRecruiters, Ashby, Recruitee ✅, Adzuna (connecteur prêt, facultatif)
+- [x] **2. Validité et déduplication** : doublons flous ✅, fraîcheur 21 jours ✅, garde-fou 3 mois ✅, import des candidatures ✅ (deux boîtes), fiche complète via Greenhouse, Lever, SmartRecruiters, Ashby, Recruitee ✅ et sur le site carrières de l'employeur (offres schema.org JobPosting) ✅, Adzuna (connecteur prêt, facultatif)
 - [ ] **3. Scoring et calibrage** : `profil/competences.yaml` ✅, grille V2 sur 100 + classes A/B/C ✅ (`app/scoring.py`, branchée sur l'agent Matching), outil de calibrage ✅ ; reste à noter 20 offres et ajuster les poids
 - [x] **4. Génération** : moteur ATS ✅ (compatibilité, qualité, matching), agent Dossier ✅ (CV + LM adaptés dans la langue de l'offre, PDF + DOCX, garde-fou de véracité, relecture ATS, « ATS friendly » si compat ≥ 90 et matching ≥ CV d'origine), validation → « À envoyer » ✅ ; dépôt Drive remplacé par la base (téléchargement depuis le téléphone) et `Candidatures/`
 - [x] **5. Alertes et suivi** : agent Veille ✅, agent Matching ✅, agent Suivi ✅ (réponses, accusés : l'offre passe « Envoyée » toute seule), relances J+7 / J+14 ✅ (texte prêt, envoi par toi depuis ta messagerie), « sans suite » à 30 jours ✅, orchestrateur + timer ✅, pipeline 6 étapes ✅, notifications appli + bureau ✅. Détails d'origine : alertes mail, bouton « J'ai postulé », relances J+7, orchestrateur qui valide la candidature à la réception de l'accusé
@@ -264,7 +264,7 @@ EMploi_App/
 │   ├── dedup.py            # doublons flous, garde-fou 3 mois
 │   ├── validite.py         # fraîcheur + dédup (CLI)
 │   ├── suivi/              # regles.py (lecture des mails), historique.py (import des candidatures)
-│   ├── fiches/             # ats.py (API publiques des ATS), adzuna.py, recherche.py (CLI)
+│   ├── fiches/             # ats.py (API publiques des ATS), jobposting.py (sites carrières, JobPosting), adzuna.py, recherche.py (CLI)
 │   ├── serveur.py          # API FastAPI de l'appli locale ; __main__.py = lanceur
 │   ├── documents.py        # dépôt CV / LM : validation, extraction du texte, diagnostic ATS
 │   ├── ats/                # compatibilite.py (score ATS local), moteur.py (lecture, qualité, matching),

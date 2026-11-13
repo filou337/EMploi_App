@@ -24,7 +24,7 @@ from rapidfuzz import fuzz
 from app.collecte.normalisation import _mots, niveau, norm_entreprise, norm_intitule, norm_ville
 from app.db import connexion
 from app.entreprises import compact
-from app.fiches import adzuna
+from app.fiches import adzuna, jobposting
 from app.fiches.ats import (
     CONNECTEURS,
     Poste,
@@ -111,8 +111,49 @@ class Resultat:
     verdicts: list[Verdict] = field(default_factory=list)
 
 
-def _trouver_tableau(nom: str, ats: str | None, slug: str | None) -> Tableau | None:
-    if ats and ats != "aucun" and slug and ats in CONNECTEURS:
+def sites_employeur(conn, ent: dict) -> list[tuple[str, bool]]:
+    """Sites où chercher les offres JobPosting : (adresse, devinée ?), les sûres d'abord.
+
+    Sûres : site carrières ou site web renseignés, domaine des adresses mail de l'employeur.
+    Devinées : nom.fr et nom.com, acceptées seulement si les offres portent son nom.
+    """
+    from app.entreprises import domaine_racine, est_generique_ou_ats
+
+    sures = [ent.get("site_carrieres"), ent.get("site_web")]
+    for r in conn.execute(
+        "SELECT email FROM contacts WHERE entreprise_id = %(e)s AND email IS NOT NULL"
+        " UNION SELECT contact_email FROM candidatures WHERE entreprise_id = %(e)s"
+        " AND contact_email IS NOT NULL",
+        {"e": ent["id"]},
+    ):
+        domaine = r["email"].rpartition("@")[2].lower()
+        if domaine and not est_generique_ou_ats(domaine):
+            sures.append(domaine_racine(domaine))
+    devinees = []
+    nom = ent.get("nom_affiche") or ent.get("nom_norm") or ""
+    for s in slugs(nom)[:1]:
+        if "-" not in s and len(s) >= 3:
+            devinees += [f"{s}.fr", f"{s}.com"]
+    vus, sites = set(), []
+    for site, devinee in [(x, False) for x in sures if x] + [(x, True) for x in devinees]:
+        try:
+            base = jobposting.normaliser(site)
+        except ValueError:
+            continue
+        if base.removeprefix("https://www.") not in vus:
+            vus.add(base.removeprefix("https://www."))
+            sites.append((base, devinee))
+    return sites[:4]
+
+
+def _trouver_tableau(
+    nom: str, ats: str | None, slug: str | None, sites: list[tuple[str, bool]] | None = None
+) -> Tableau | None:
+    if ats == "site" and slug:
+        t = jobposting.tableau(slug)
+        if t is not None:
+            return t
+    elif ats and ats != "aucun" and slug and ats in CONNECTEURS:
         t = CONNECTEURS[ats](slug)
         if t is not None:
             return t  # site déjà identifié : on lui fait confiance
@@ -121,6 +162,15 @@ def _trouver_tableau(nom: str, ats: str | None, slug: str | None) -> Tableau | N
             t = connecteur(s)
             if t is not None and t.postes and est_son_site(t, nom):
                 return t
+    # Pas d'ATS public : offres JobPosting publiées sur le site de l'employeur.
+    for site, devinee in sites or []:
+        t = jobposting.tableau(site)
+        if t is None or not t.postes:
+            continue
+        if devinee and not t.nom_employeur:
+            continue  # adresse devinée : il faut que les offres portent le nom de l'employeur
+        if est_son_site(t, nom):
+            return t
     return None
 
 
@@ -156,7 +206,9 @@ def traiter_entreprise(ent: dict, offres: list[dict]) -> Resultat:
 
 
 def _traiter_ats(ent: dict, offres: list[dict]) -> Resultat:
-    tableau = _trouver_tableau(ent["nom_affiche"] or ent["nom_norm"], ent["ats"], ent["ats_slug"])
+    tableau = _trouver_tableau(
+        ent["nom_affiche"] or ent["nom_norm"], ent["ats"], ent["ats_slug"], ent.get("sites")
+    )
     if tableau is None:
         return Resultat(
             ent["id"],
@@ -236,8 +288,8 @@ def _a_traiter(conn, limite: int | None, entreprise: str | None) -> list[tuple[d
     if not par_ent:
         return []
     ents = conn.execute(
-        "SELECT id, nom_norm, nom_affiche, ats, ats_slug, ats_verifie_le FROM entreprises"
-        " WHERE id = ANY(%s)",
+        "SELECT id, nom_norm, nom_affiche, ats, ats_slug, ats_verifie_le, site_carrieres, site_web"
+        " FROM entreprises WHERE id = ANY(%s)",
         (list(par_ent),),
     ).fetchall()
     limite_essai = datetime.now(UTC) - DELAI_NOUVEL_ESSAI
@@ -252,13 +304,17 @@ def _a_traiter(conn, limite: int | None, entreprise: str | None) -> list[tuple[d
     choisies.sort(
         key=lambda e: -len(par_ent[e["id"]])
     )  # les employeurs aux offres nombreuses d'abord
-    return [(e, par_ent[e["id"]]) for e in choisies[:limite]]
+    lots = [(e, par_ent[e["id"]]) for e in choisies[:limite]]
+    for e, _ in lots:
+        e["sites"] = sites_employeur(conn, e)
+    return lots
 
 
 def _enregistrer(conn, res: Resultat) -> None:
     conn.execute(
-        "UPDATE entreprises SET ats = %s, ats_slug = %s, ats_verifie_le = now() WHERE id = %s",
-        (res.ats, res.slug, res.entreprise_id),
+        "UPDATE entreprises SET ats = %s, ats_slug = %s, ats_verifie_le = now(),"
+        " site_carrieres = CASE WHEN %s = 'site' THEN %s ELSE site_carrieres END WHERE id = %s",
+        (res.ats, res.slug, res.ats, res.slug, res.entreprise_id),
     )
     for v in res.verdicts:
         if v.statut == "valide":

@@ -19,7 +19,7 @@ from app import criteres
 from app.collecte.normalisation import cle_floue, contrat_depuis_intitule
 from app.dedup import meme_offre
 from app.fiches.ats import Poste, fiche_smartrecruiters
-from app.fiches.recherche import _trouver_tableau
+from app.fiches.recherche import _trouver_tableau, sites_employeur
 from app.notifications import notifier
 
 
@@ -71,11 +71,16 @@ class Bilan:
 
 def _surveiller(conn: psycopg.Connection, ent: dict, crit: dict, bilan: Bilan) -> str:
     nom = ent["nom_affiche"] or ent["nom_norm"]
-    tableau = _trouver_tableau(nom, ent["ats"], ent["ats_slug"])
+    tableau = _trouver_tableau(
+        nom, ent["ats"], ent["ats_slug"], sites_employeur(conn, {**ent, "id": ent["entreprise_id"]})
+    )
     conn.execute(
-        "UPDATE entreprises SET ats = %s, ats_slug = %s, ats_verifie_le = now() WHERE id = %s",
+        "UPDATE entreprises SET ats = %s, ats_slug = %s, ats_verifie_le = now(),"
+        " site_carrieres = CASE WHEN %s = 'site' THEN %s ELSE site_carrieres END WHERE id = %s",
         (
             tableau.ats if tableau else "aucun",
+            tableau.slug if tableau else None,
+            tableau.ats if tableau else None,
             tableau.slug if tableau else None,
             ent["entreprise_id"],
         ),
@@ -227,7 +232,8 @@ def executer(conn: psycopg.Connection) -> dict:
     bilan = Bilan()
     for ent in conn.execute(
         """
-        SELECT v.id, v.entreprise_id, v.derniere_veille, e.nom_affiche, e.nom_norm, e.ats, e.ats_slug
+        SELECT v.id, v.entreprise_id, v.derniere_veille, e.nom_affiche, e.nom_norm, e.ats, e.ats_slug,
+               e.site_carrieres, e.site_web
         FROM veille_entreprises v JOIN entreprises e ON e.id = v.entreprise_id
         WHERE v.active ORDER BY v.derniere_veille NULLS FIRST
         """
