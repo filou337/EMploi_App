@@ -6,6 +6,7 @@
 name: Agents EMploi_App
 
 on:
+  # Toutes les 30 min (heure UTC) ; GitHub peut décaler un passage de quelques minutes.
   schedule:
     - cron: "*/30 * * * *"
   workflow_dispatch:
