@@ -6,6 +6,7 @@ dates en clair. Le PDF produit est relu par le checker avant d'être déclaré �
 """
 
 import io
+import re
 import shutil
 import subprocess
 import tempfile
@@ -121,33 +122,54 @@ def _periode(e: dict, langue: str) -> str:
     return debut or fin
 
 
-def _contacts(ident: dict) -> list[str]:
-    return [
-        v
-        for v in (
-            ident.get("email"),
-            ident.get("telephone"),
-            ident.get("ville"),
-            ident.get("linkedin"),
-            ident.get("portfolio"),
-            ident.get("permis"),
-            ident.get("mobilite"),
-        )
-        if v
+def _lien_court(url: str) -> str:
+    """« https://www.linkedin.com/in/x/ » -> « linkedin.com/in/x »."""
+    return re.sub(r"^https?://(?:www\.)?", "", (url or "").strip()).rstrip("/")
+
+
+def _contacts(ident: dict, court: bool = False) -> list[str]:
+    """Coordonnées de l'en-tête ; `court` : liens raccourcis, mobilité retirée (CV sur une page)."""
+    liens = [ident.get("linkedin"), ident.get("portfolio")]
+    if court:
+        liens = [_lien_court(x) for x in liens]
+    valeurs = [
+        ident.get("email"),
+        ident.get("telephone"),
+        ident.get("ville"),
+        *liens,
+        ident.get("permis"),
     ]
+    if not court:
+        valeurs.append(ident.get("mobilite"))
+    return [v for v in valeurs if v]
+
+
+# Paliers de resserrage d'un CV qui dépasse une page (0 = mise en page normale).
+COMPACTS = {
+    1: "h1 { font-size: 18pt; } .titre { margin: 1px 0 2px; } .contacts { font-size: 9pt; margin-bottom: 5px; }",
+    2: "h1 { font-size: 18pt; } .titre { margin: 1px 0 2px; } .contacts { font-size: 9pt; margin-bottom: 5px; }"
+    " body { font-size: 10pt; line-height: 1.3; } h2 { margin: 8px 0 3px; } .exp { margin-bottom: 5px; }"
+    " li { margin: 0 0 1px; }",
+    3: "@page { margin: 11mm 13mm; } h1 { font-size: 17pt; } .titre { margin: 0 0 2px; }"
+    " .contacts { font-size: 8.8pt; margin-bottom: 4px; } body { font-size: 9.6pt; line-height: 1.27; }"
+    " h2 { margin: 7px 0 3px; font-size: 10.5pt; } .exp { margin-bottom: 4px; } li { margin: 0 0 1px; }",
+}
+COMPACTS[4] = COMPACTS[3]
+PUCES_MAX = {3: 4, 4: 3}  # puces gardées par expérience aux derniers paliers
 
 
 def _langue_lib(nom: str, langue: str) -> str:
     return LANGUES_EN.get((nom or "").lower(), nom) if langue == "en" else nom
 
 
-def html_cv(cv: dict, ident: dict, langue: str) -> str:
+def html_cv(cv: dict, ident: dict, langue: str, compact: int = 0) -> str:
     t = TITRES[langue]
     e = escape
+    cv = reduire(cv, compact)
     blocs = [
         f"<h1>{e(ident.get('nom') or '')}</h1>",
         f"<div class='titre'>{e(cv.get('titre', ''))}</div>",
-        f"<div class='contacts'>{' · '.join(e(c) for c in _contacts(ident))}</div>",
+        f"<div class='contacts'>{' · '.join(e(c) for c in _contacts(ident, court=compact >= 1))}</div>",
     ]
     if cv.get("accroche"):
         blocs += [f"<h2>{t['profil']}</h2>", f"<p>{e(cv['accroche'])}</p>"]
@@ -172,6 +194,15 @@ def html_cv(cv: dict, ident: dict, langue: str) -> str:
             f"{' · ' + e(_date_en(f['annee']) if langue == 'en' else f['annee']) if f.get('annee') else ''}</p>"
             for f in cv["formations"]
         ]
+    if compact >= 2 and cv.get("langues") and cv.get("qualites"):
+        langues_txt = " · ".join(
+            f"{_langue_lib(x.get('langue'), langue)} ({x.get('niveau')})" for x in cv["langues"]
+        )
+        blocs += [
+            f"<h2>{t['langues']} · {t['qualites']}</h2>",
+            f"<p>{e(langues_txt)} — {e(' · '.join(cv['qualites']))}</p>",
+        ]
+        return _page("\n".join(blocs), langue, ident.get("nom", ""), COMPACTS.get(compact, ""))
     if cv.get("langues"):
         blocs += [
             f"<h2>{t['langues']}</h2>",
@@ -184,7 +215,37 @@ def html_cv(cv: dict, ident: dict, langue: str) -> str:
         ]
     if cv.get("qualites"):
         blocs += [f"<h2>{t['qualites']}</h2>", f"<p>{e(' · '.join(cv['qualites']))}</p>"]
-    return _page("\n".join(blocs), langue, ident.get("nom", ""))
+    return _page("\n".join(blocs), langue, ident.get("nom", ""), COMPACTS.get(compact, ""))
+
+
+def reduire(cv: dict, compact: int) -> dict:
+    """Aux derniers paliers, limite le nombre de puces par expérience (les premières, les plus utiles)."""
+    maxi = PUCES_MAX.get(compact)
+    if not maxi:
+        return cv
+    return {
+        **cv,
+        "experiences": [
+            {**x, "puces": x.get("puces", [])[:maxi]} for x in cv.get("experiences", [])
+        ],
+    }
+
+
+def pages(pdf_octets: bytes) -> int:
+    from io import BytesIO
+
+    from pypdf import PdfReader
+
+    return len(PdfReader(BytesIO(pdf_octets)).pages)
+
+
+def pdf_cv_une_page(cv: dict, ident: dict, langue: str) -> tuple[bytes, int]:
+    """PDF du CV sur une seule page : resserre par paliers (en-tête d'abord). Renvoie (pdf, palier)."""
+    for compact in range(max(COMPACTS) + 1):
+        octets = pdf(html_cv(cv, ident, langue, compact))
+        if pages(octets) <= 1:
+            return octets, compact
+    return octets, compact  # dernier palier : on garde le plus compact
 
 
 def html_lm(lm: dict, ident: dict, entreprise: str, langue: str) -> str:
@@ -210,10 +271,11 @@ def html_lm(lm: dict, ident: dict, entreprise: str, langue: str) -> str:
     return _page(html, langue, ident.get("nom", ""))
 
 
-def _page(corps: str, langue: str, auteur: str) -> str:
+def _page(corps: str, langue: str, auteur: str, css_en_plus: str = "") -> str:
     return (
         f"<!doctype html><html lang='{langue}'><head><meta charset='utf-8'><title>{escape(auteur)}</title>"
-        f"<meta name='author' content='{escape(auteur)}'><style>{CSS}</style></head><body>{corps}</body></html>"
+        f"<meta name='author' content='{escape(auteur)}'><style>{CSS}{css_en_plus}</style></head>"
+        f"<body>{corps}</body></html>"
     )
 
 
@@ -261,8 +323,9 @@ def _titre_section(document: docx.Document, texte: str) -> None:
     p.paragraph_format.space_before, p.paragraph_format.space_after = Pt(8), Pt(2)
 
 
-def docx_cv(cv: dict, ident: dict, langue: str) -> bytes:
+def docx_cv(cv: dict, ident: dict, langue: str, compact: int = 0) -> bytes:
     t = TITRES[langue]
+    cv = reduire(cv, compact)
     d = docx.Document()
     _style_docx(d)
     tete = d.add_paragraph()
@@ -271,7 +334,7 @@ def docx_cv(cv: dict, ident: dict, langue: str) -> bytes:
     sous = d.add_paragraph()
     rs = sous.add_run(cv.get("titre", ""))
     rs.bold, rs.font.color.rgb = True, RGBColor(0x08, 0x7F, 0x8C)
-    d.add_paragraph(" · ".join(_contacts(ident)))
+    d.add_paragraph(" · ".join(_contacts(ident, court=compact >= 1)))
     if cv.get("accroche"):
         _titre_section(d, t["profil"])
         d.add_paragraph(cv["accroche"])

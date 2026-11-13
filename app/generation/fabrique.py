@@ -215,9 +215,11 @@ def _rediger_et_relire(offre, texte_offre, langue, ident, cv_source, cv_masque, 
     ]
     nom = _morceau(ident["nom"], 25)
     societe = _morceau(offre["entreprise"], 25)
+    # Le CV tient toujours sur une page : resserrage par paliers (en-tête d'abord) si besoin.
+    cv_pdf, compact = rendu.pdf_cv_une_page(cv, ident, langue)
     fichiers = {
-        ("cv", "pdf"): rendu.pdf(rendu.html_cv(cv, ident, langue)),
-        ("cv", "docx"): rendu.docx_cv(cv, ident, langue),
+        ("cv", "pdf"): cv_pdf,
+        ("cv", "docx"): rendu.docx_cv(cv, ident, langue, compact),
         ("lm", "pdf"): rendu.pdf(rendu.html_lm(lm, ident, offre["entreprise"], langue)),
         ("lm", "docx"): rendu.docx_lm(lm, ident, offre["entreprise"], langue),
     }
@@ -246,6 +248,7 @@ def _rediger_et_relire(offre, texte_offre, langue, ident, cv_source, cv_masque, 
         "compat": compat,
         "matching": matching,
         "essais": 1,
+        "compact": compact,
     }
 
 
@@ -296,6 +299,7 @@ def _produire(
             for k in ("score_matching", "detail_score", "mots_cles_manquants", "synthese")
         },
         "essais": essai["essais"],
+        "palier_une_page": essai.get("compact", 0),
         "motifs": motifs,
         "dossier": dossier,
     }

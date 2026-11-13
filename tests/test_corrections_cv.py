@@ -70,3 +70,37 @@ def test_pas_de_seconde_redaction_si_c_est_bon():
 def test_on_garde_le_premier_si_le_second_est_pire():
     rediger, _ = _essais(70.0, 65.0)
     assert meilleur_essai(75.3, rediger)["matching"]["score_matching"] == 70.0
+
+
+def test_cv_tenu_sur_une_page_par_paliers(monkeypatch):
+    from app.generation import rendu
+
+    rendus = []
+    monkeypatch.setattr(rendu, "pdf", lambda html: html.encode())
+    monkeypatch.setattr(
+        rendu,
+        "html_cv",
+        lambda cv, ident, langue, compact=0: rendus.append(compact) or f"p{compact}",
+    )
+    monkeypatch.setattr(rendu, "pages", lambda octets: 2 if octets in (b"p0", b"p1") else 1)
+    octets, palier = rendu.pdf_cv_une_page({}, {}, "fr")
+    assert palier == 2 and octets == b"p2" and rendus == [0, 1, 2]
+
+
+def test_en_tete_court():
+    from app.generation.rendu import _contacts
+
+    ident = {
+        "email": "c@x.fr",
+        "linkedin": "https://www.linkedin.com/in/camille/",
+        "portfolio": "https://x.github.io/p/",
+        "permis": "Permis B",
+        "mobilite": "Télétravail ou présentiel",
+    }
+    assert _contacts(ident, court=True) == [
+        "c@x.fr",
+        "linkedin.com/in/camille",
+        "x.github.io/p",
+        "Permis B",
+    ]
+    assert "Télétravail ou présentiel" in _contacts(ident)
