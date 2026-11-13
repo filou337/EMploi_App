@@ -8,7 +8,9 @@ Méthode, à cadence lente et dans le respect de robots.txt :
 1. pages d'offres listées dans les plans du site (sitemaps déclarés dans robots.txt, ou
    /sitemap.xml), sinon liens des pages carrières (/carrieres, /careers, /jobs…) ;
 2. seules les pages d'offres « data » sont lues (mots-clés dans l'adresse), 25 au plus ;
-3. chaque page donne 0, 1 ou plusieurs JobPosting ; une offre expirée (validThrough) est ignorée.
+3. chaque page donne 0, 1 ou plusieurs JobPosting ; une offre expirée (validThrough) est ignorée ;
+4. page de liste construite en JavaScript (aucune offre ni lien dans le HTML) : rendue par Chrome
+   sans écran (déjà utilisé pour les PDF), 3 pages au plus par site.
 
 Résultat : un Tableau « site » comme ceux des ATS publics (recherche des fiches, veille). Il est
 marqué incomplet : une offre absente de ce qu'on a lu n'est pas pour autant expirée.
@@ -17,6 +19,9 @@ marqué incomplet : une offre absente de ce qu'on a lu n'est pas pour autant exp
 import gzip
 import json
 import re
+import shutil
+import subprocess
+import tempfile
 import threading
 import time
 from collections import Counter
@@ -25,6 +30,7 @@ from urllib.parse import urljoin, urlparse
 from urllib.robotparser import RobotFileParser
 
 import httpx
+from rapidfuzz import fuzz
 
 from app.collecte.normalisation import sans_accents
 from app.fiches.ats import USER_AGENT, Poste, Tableau, _cadence, _date_iso, _pays
@@ -46,6 +52,7 @@ MAX_PAGES = 25
 BUDGET_SECONDES = 45  # par adresse lue : un grand site ne doit pas bloquer le passage
 TAILLE_MAX = 8_000_000  # octets : au-delà, le plan du site est ignoré
 # Les grands groupes publient leurs offres sur un sous-domaine dédié.
+RENDUS_MAX = 3  # pages de liste rendues par Chrome, par site
 SOUS_DOMAINES = ("careers", "jobs", "recrutement", "carrieres", "emploi", "join")
 _LD = re.compile(
     r"<script[^>]+type=[\"']application/ld\+json[\"'][^>]*>(.*?)</script>",
@@ -71,6 +78,24 @@ _URL_DATA = re.compile(
     r"|dataviz|etl|sql|power-?bi|tableau|dbt|big-data|reporting)(?![a-z])",
     re.IGNORECASE,
 )
+
+# Pages françaises d'abord : un grand groupe publie aussi ses offres de New York ou Bangalore.
+_URL_FR = re.compile(
+    r"(?:^|[/_.-])(?:fr|fr-fr|france|paris|ile-de-france|idf|hauts-de-seine|la-defense)(?:$|[/_.-])",
+    re.IGNORECASE,
+)
+
+
+def _mots(texte: str) -> str:
+    return " ".join(re.findall(r"[a-z0-9]+", sans_accents(texte or "").lower()))
+
+
+def _priorite(url: str, indices: tuple[str, ...] = ()) -> tuple:
+    """Ordre de lecture : ressemblance avec les intitulés cherchés, puis France, puis data."""
+    chemin = sans_accents(urlparse(url).path.lower())
+    proche = max((fuzz.token_set_ratio(_mots(chemin), i) for i in indices), default=0)
+    return (-(proche // 10), not _URL_FR.search(chemin), not _URL_DATA.search(chemin))
+
 
 _client = httpx.Client(
     timeout=20,
@@ -100,6 +125,46 @@ def _get(url: str) -> httpx.Response | None:
     if int(r.headers.get("content-length") or 0) > TAILLE_MAX or len(r.content) > TAILLE_MAX:
         return None
     return r
+
+
+def _chrome() -> str | None:
+    for nom in ("google-chrome", "google-chrome-stable", "chromium", "chromium-browser"):
+        if chemin := shutil.which(nom):
+            return chemin
+    return None
+
+
+def rendre(url: str, attente_ms: int = 8000) -> str | None:
+    """HTML final d'une page construite en JavaScript (Chrome sans écran), ou None."""
+    chrome = _chrome()
+    if chrome is None or _depasse():
+        return None
+    verrou = _cadence.attendre(url)
+    try:
+        with tempfile.TemporaryDirectory() as profil:
+            r = subprocess.run(
+                [
+                    chrome,
+                    "--headless=new",
+                    "--disable-gpu",
+                    "--no-sandbox",
+                    "--no-first-run",
+                    f"--user-data-dir={profil}",
+                    f"--user-agent={USER_AGENT}",
+                    f"--virtual-time-budget={attente_ms}",
+                    "--dump-dom",
+                    url,
+                ],
+                capture_output=True,
+                text=True,
+                timeout=45,
+                check=False,
+            )
+        return r.stdout if r.returncode == 0 and len(r.stdout) > 500 else None
+    except (OSError, subprocess.SubprocessError):
+        return None
+    finally:
+        _cadence.fin(url, verrou)
 
 
 def normaliser(site: str) -> str:
@@ -258,18 +323,21 @@ def _urls_pages_carrieres(base: str, rp: RobotFileParser) -> list[str]:
     return liens
 
 
-def pages_offres(base: str) -> tuple[list[str], RobotFileParser]:
+def pages_offres(base: str, indices: tuple[str, ...] = ()) -> tuple[list[str], RobotFileParser]:
     """Pages d'offres data du site, d'après ses plans ou ses pages carrières (MAX_PAGES au plus)."""
     rp, sitemaps = _robots(base)
     candidates = _urls_sitemaps(base, sitemaps, rp) or _urls_pages_carrieres(base, rp)
     retenues = []
     for u in candidates:
         chemin = sans_accents(urlparse(u).path.lower())
-        offre_data = bool(_URL_OFFRE.search(chemin) and _URL_DATA.search(chemin))
+        offre_data = bool(
+            _URL_OFFRE.search(chemin)
+            and (_URL_DATA.search(chemin) or (indices and _priorite(u, indices)[0] <= -7))
+        )
         liste = u.rstrip("/").endswith(PAGES_CARRIERES)  # page carrières qui contient les offres
         if (offre_data or liste) and u not in retenues and rp.can_fetch(USER_AGENT, u):
             retenues.append(u)
-    return retenues[:MAX_PAGES], rp
+    return sorted(retenues, key=lambda u: _priorite(u, indices))[:MAX_PAGES], rp
 
 
 def _bases(site: str) -> list[str]:
@@ -282,7 +350,9 @@ def _bases(site: str) -> list[str]:
     return [f"https://{sd}.{hote}" for sd in SOUS_DOMAINES] + [base]
 
 
-def _fiches_liees(html: str, url: str, rp: RobotFileParser) -> list[str]:
+def _fiches_liees(
+    html: str, url: str, rp: RobotFileParser, indices: tuple[str, ...] = ()
+) -> list[str]:
     """Liens d'une page de liste vers des fiches d'offre du même site, les offres data d'abord."""
     hote = urlparse(url).hostname
     liens = []
@@ -297,14 +367,14 @@ def _fiches_liees(html: str, url: str, rp: RobotFileParser) -> list[str]:
             and rp.can_fetch(USER_AGENT, lien)
         ):
             liens.append(lien)
-    return sorted(liens, key=lambda u: not _URL_DATA.search(sans_accents(urlparse(u).path.lower())))
+    return sorted(liens, key=lambda u: _priorite(u, indices))
 
 
-def _lire(base: str) -> tuple[dict[str, Poste], Counter[str]]:
-    pages, rp = pages_offres(base)
+def _lire(base: str, indices: tuple[str, ...] = ()) -> tuple[dict[str, Poste], Counter[str]]:
+    pages, rp = pages_offres(base, indices)
     postes: dict[str, Poste] = {}
     employeurs: Counter[str] = Counter()
-    a_lire, vus = list(pages), set()
+    a_lire, vus, rendus = list(pages), set(), 0
     while a_lire and len(vus) < MAX_PAGES and not _depasse():
         url = a_lire.pop(0)
         if url in vus:
@@ -313,10 +383,18 @@ def _lire(base: str) -> tuple[dict[str, Poste], Counter[str]]:
         r = _get(url)
         if r is None or r.status_code != 200:
             continue
-        offres = jobpostings(r.text)
+        html = r.text
+        offres = jobpostings(html)
         if not offres and url in pages:
             # Page de liste : on descend vers ses fiches d'offre (avant les autres pages de liste).
-            a_lire = _fiches_liees(r.text, str(r.url), rp)[:10] + a_lire
+            fiches = _fiches_liees(html, str(r.url), rp, indices)
+            if not fiches and rendus < RENDUS_MAX:
+                # Rien dans le HTML : liste construite en JavaScript, on la fait rendre par Chrome.
+                rendus += 1
+                html = rendre(str(r.url)) or html
+                offres = jobpostings(html)
+                fiches = _fiches_liees(html, str(r.url), rp, indices)
+            a_lire = fiches[:10] + a_lire
         for o in offres:
             lu = poste(o, str(r.url))
             if lu:
@@ -327,8 +405,14 @@ def _lire(base: str) -> tuple[dict[str, Poste], Counter[str]]:
     return postes, employeurs
 
 
-def tableau(site: str, budget: float = BUDGET_SECONDES) -> Tableau | None:
-    """Offres JobPosting du site de l'employeur, ou None si le site n'en publie pas."""
+def tableau(
+    site: str, budget: float = BUDGET_SECONDES, indices: list[str] | None = None
+) -> Tableau | None:
+    """Offres JobPosting du site de l'employeur, ou None si le site n'en publie pas.
+
+    `indices` : intitulés recherchés (recherche des fiches) ; leurs pages sont lues en premier.
+    """
+    cles = tuple(_mots(i) for i in indices or () if i)
     try:
         bases = _bases(site)
     except ValueError:
@@ -338,7 +422,7 @@ def tableau(site: str, budget: float = BUDGET_SECONDES) -> Tableau | None:
             _budget.fin = (
                 time.monotonic() + budget if budget else 0.0
             )  # budget propre à chaque adresse
-            postes, employeurs = _lire(base)
+            postes, employeurs = _lire(base, cles)
             if postes:
                 break
         else:

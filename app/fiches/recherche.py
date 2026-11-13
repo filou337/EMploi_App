@@ -147,10 +147,15 @@ def sites_employeur(conn, ent: dict) -> list[tuple[str, bool]]:
 
 
 def _trouver_tableau(
-    nom: str, ats: str | None, slug: str | None, sites: list[tuple[str, bool]] | None = None
+    nom: str,
+    ats: str | None,
+    slug: str | None,
+    sites: list[tuple[str, bool]] | None = None,
+    indices: list[str] | None = None,
 ) -> Tableau | None:
+    """`indices` : intitulés des offres recherchées, lus en premier sur un site carrières."""
     if ats == "site" and slug:
-        t = jobposting.tableau(slug)
+        t = jobposting.tableau(slug, indices=indices)
         if t is not None:
             return t
     elif ats and ats != "aucun" and slug and ats in CONNECTEURS:
@@ -164,7 +169,7 @@ def _trouver_tableau(
                 return t
     # Pas d'ATS public : offres JobPosting publiées sur le site de l'employeur.
     for site, devinee in sites or []:
-        t = jobposting.tableau(site)
+        t = jobposting.tableau(site, indices=indices)
         if t is None or not t.postes:
             continue
         if devinee and not t.nom_employeur:
@@ -207,7 +212,11 @@ def traiter_entreprise(ent: dict, offres: list[dict]) -> Resultat:
 
 def _traiter_ats(ent: dict, offres: list[dict]) -> Resultat:
     tableau = _trouver_tableau(
-        ent["nom_affiche"] or ent["nom_norm"], ent["ats"], ent["ats_slug"], ent.get("sites")
+        ent["nom_affiche"] or ent["nom_norm"],
+        ent["ats"],
+        ent["ats_slug"],
+        ent.get("sites"),
+        [o["intitule"] for o in offres if o.get("intitule")],
     )
     if tableau is None:
         return Resultat(
@@ -416,4 +425,13 @@ def main() -> None:
         help="oublie les sites trouvés et les verdicts précédents, puis recommence",
     )
     args = p.parse_args()
-    executer(args.limite, args.entreprise, args.refaire)
+    from app.orchestrateur import VERROU
+
+    # Même verrou que l'orchestrateur : jamais deux recherches de fiches en même temps.
+    with connexion() as verrou:
+        if not verrou.execute("SELECT pg_try_advisory_lock(%s) AS ok", (VERROU,)).fetchone()["ok"]:
+            raise SystemExit("Un passage des agents est en cours : réessaie quand il sera terminé.")
+        try:
+            executer(args.limite, args.entreprise, args.refaire)
+        finally:
+            verrou.execute("SELECT pg_advisory_unlock(%s)", (VERROU,))

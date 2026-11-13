@@ -133,3 +133,39 @@ def test_sous_domaines_carrieres_d_abord():
     assert jp._bases("acme.fr")[0] == "https://careers.acme.fr"
     assert jp._bases("acme.fr")[-1] == "https://acme.fr"
     assert jp._bases("careers.acme.fr") == ["https://careers.acme.fr"]
+
+
+def test_liste_en_javascript_rendue_par_chrome(monkeypatch):
+    vide = "<html><body><div id='app'></div><script src='/app.js'></script></body></html>"
+    rendu = '<a href="/jobs/data-analyst-h-f-99999">Data Analyst</a>'
+    pages = {
+        "/robots.txt": "",
+        "/sitemap.xml": "<urlset><url><loc>https://acme.fr/fr/jobs/data</loc></url></urlset>",
+        "/fr/jobs/data": vide,
+        "/jobs/data-analyst-h-f-99999": _page(OFFRE),
+    }
+
+    def repondre(req):
+        if req.url.path not in pages:
+            return httpx.Response(404)
+        return httpx.Response(200, text=pages[req.url.path], headers={"content-type": "text/html"})
+
+    rendus = []
+    monkeypatch.setattr(jp, "_client", httpx.Client(transport=httpx.MockTransport(repondre)))
+    monkeypatch.setattr(jp._cadence, "attendre", lambda url: None)
+    monkeypatch.setattr(jp._cadence, "fin", lambda url, v: None)
+    monkeypatch.setattr(jp, "SOUS_DOMAINES", ())
+    monkeypatch.setattr(jp, "rendre", lambda url: rendus.append(url) or rendu)
+    t = jp.tableau("acme.fr")
+    assert rendus == ["https://acme.fr/fr/jobs/data"]  # une seule page rendue : la liste vide
+    assert [p.titre for p in t.postes] == ["Data Analyst H/F"]
+
+
+def test_pages_francaises_et_data_d_abord():
+    urls = [
+        "https://acme.com/en/jobs/new-york/marketing-1",
+        "https://acme.com/en/jobs/new-york/data-analyst-2",
+        "https://acme.com/fr/jobs/paris/data-engineer-3",
+        "https://acme.com/fr/jobs/paris/comptable-4",
+    ]
+    assert sorted(urls, key=jp._priorite) == [urls[2], urls[3], urls[1], urls[0]]
