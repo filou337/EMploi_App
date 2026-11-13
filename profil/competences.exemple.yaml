@@ -73,3 +73,9 @@ secteurs:
     - energie
     - conseil
   exclus: []
+
+# Faits validés par toi : acceptés par le garde-fou de véracité dans les mails et utilisés
+# pour la rédaction. N'y mets que ce que tu peux justifier en entretien.
+faits:
+  - 5 missions de data analyse menées
+  - travail en méthode Agile Kanban

@@ -161,3 +161,35 @@ def test_envoi_sous_le_seuil_et_mise_de_cote_au_dessus(base, monkeypatch):
     assert etapes == {bas: "envoyee", haut: "a_envoyer"}
     c.commit()
     assert ca.executer(c)["envoyées"] == 0  # rien ne repart une seconde fois
+
+
+def test_faits_valides_acceptes_par_le_garde_fou(monkeypatch):
+    monkeypatch.setattr(
+        ca.ats, "cv_par_defaut", lambda conn: {"texte": "SQL, Power BI, méthodes Agile."}
+    )
+    monkeypatch.setattr(
+        ca.identite,
+        "lire",
+        lambda conn, texte=None: {"nom": "Camille Test", "portfolio": "exemple.github.io/p"},
+    )
+    monkeypatch.setattr(
+        ca.scoring, "faits", lambda: ["12 missions de data analyse menées", "travail en Kanban"]
+    )
+    reponse = {
+        "objet": "Candidature – Data Analyst",
+        "salutation": "Bonjour,",
+        "paragraphes": [
+            "J'ai mené 12 missions de data analyse, en Kanban, avec SQL et Power BI.",
+            "J'ai aussi déployé Snowflake sur 40 projets.",  # ni dans le CV ni dans les faits
+        ],
+        "formule": "Au plaisir de vous lire,",
+    }
+    monkeypatch.setattr(
+        ca, "generer_json", lambda consigne, contenu, schema: (reponse, "modele-test")
+    )
+    offre = {"intitule": "Data Analyst", "entreprise": "Acme", "texte": "Missions SQL."}
+    objet, corps, verif = ca.rediger(None, offre, "")
+    assert objet == "Candidature – Data Analyst"
+    assert "12 missions" in corps and "Kanban" in corps
+    assert "Snowflake" not in corps and len(verif["retires"]) == 1
+    assert "https://exemple.github.io/p" in corps and corps.rstrip().endswith("Camille Test")

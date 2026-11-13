@@ -102,6 +102,18 @@ def charger_profil(chemin: Path = PROFIL) -> dict:
     return _charger(chemin, chemin.stat().st_mtime)
 
 
+def faits(chemin: Path = PROFIL) -> list[str]:
+    """Faits validés par toi (section « faits: » du profil), acceptés par le garde-fou de véracité.
+
+    Ex. « 12 missions de data analyse », « méthode Agile Kanban ». Liste vide sans profil.
+    """
+    try:
+        brut = charger_profil(chemin).get("faits") or []
+    except ProfilInvalide:
+        return []
+    return [str(f).strip() for f in brut if str(f).strip()]
+
+
 def niveau_profil(competence: str, profil: dict) -> float | None:
     """Facteur de niveau si la compétence est déclarée dans le profil (nom ou alias), sinon None."""
     n = _norm(competence)
