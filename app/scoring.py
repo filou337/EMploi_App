@@ -102,6 +102,15 @@ def charger_profil(chemin: Path = PROFIL) -> dict:
     return _charger(chemin, chemin.stat().st_mtime)
 
 
+def diplomes_obtenus(chemin: Path = PROFIL) -> dict[str, str]:
+    """Diplômes obtenus depuis le CV (section « diplomes_obtenus » : nom -> années)."""
+    try:
+        brut = charger_profil(chemin).get("diplomes_obtenus") or {}
+    except ProfilInvalide:
+        return {}
+    return {str(k): str(v) for k, v in brut.items()} if isinstance(brut, dict) else {}
+
+
 def faits(chemin: Path = PROFIL) -> list[str]:
     """Faits validés par toi (section « faits: » du profil), acceptés par le garde-fou de véracité.
 

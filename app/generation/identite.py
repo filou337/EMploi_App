@@ -59,7 +59,10 @@ def lire(conn: psycopg.Connection, texte_cv: str | None = None) -> dict:
     if not ident.get("nom") and texte_cv:
         ident = {**extraire(texte_cv), **{k: v for k, v in ident.items() if v}}
         criteres.ecrire(conn, "identite", ident)
-    return {c: ident.get(c, "") for c in CHAMPS}
+    lu = {c: ident.get(c, "") for c in CHAMPS}
+    # Valeurs à masquer en plus (ancienne adresse encore présente dans le CV déposé…).
+    lu["masques"] = [str(m) for m in ident.get("masques") or [] if str(m).strip()]
+    return lu
 
 
 def masquer(texte: str, ident: dict) -> str:
@@ -76,6 +79,10 @@ def masquer(texte: str, ident: dict) -> str:
         valeur = (ident.get(champ) or "").strip()
         if len(valeur) >= 4:
             t = re.sub(re.escape(valeur), jeton, t, flags=re.IGNORECASE)
+    for valeur in ident.get("masques") or []:
+        valeur = str(valeur).strip()
+        if len(valeur) >= 4:
+            t = re.sub(rf"\b{re.escape(valeur)}\b", "[VILLE]", t, flags=re.IGNORECASE)
     # Identifiant du profil LinkedIn, y compris ses morceaux quand l'extraction PDF a coupé le lien.
     slug = re.search(r"linkedin\.com/in/([\w-]+)", ident.get("linkedin") or "")
     if slug:

@@ -15,7 +15,7 @@ import re
 import psycopg
 from psycopg.types.json import Jsonb
 
-from app import criteres, documents, dossiers
+from app import criteres, documents, dossiers, scoring
 from app.ats import compatibilite, moteur
 from app.ats import service as ats
 from app.ats.anonymisation import verifier_masque
@@ -34,9 +34,29 @@ def _morceau(t: str, n: int = 30) -> str:
     return re.sub(r"[^A-Za-z0-9]+", "_", sans_accents(t or "")).strip("_")[:n] or "x"
 
 
+TOLERANCE_MATCHING = (
+    2  # points : l'écart du matching entre deux lectures (bruit) n'est pas une baisse
+)
+
+
 def _structure_cv(conn: psycopg.Connection) -> dict:
-    """Lecture structurée du CV par défaut (analyse ATS en cache, refaite si le barème a changé)."""
-    return ats.analyser_cv(conn)["resultat"]["cv"]
+    """Lecture structurée du CV par défaut (analyse ATS en cache, refaite si le barème a changé).
+
+    Les années des diplômes obtenus depuis (profil, « diplomes_obtenus ») remplacent « En cours ».
+    """
+    from copy import deepcopy
+
+    cv = deepcopy(ats.analyser_cv(conn)["resultat"]["cv"])
+    return appliquer_diplomes(cv, scoring.diplomes_obtenus())
+
+
+def appliquer_diplomes(cv: dict, diplomes: dict[str, str]) -> dict:
+    """{« Master Big Data » : « 2024-2026 »} -> année corrigée pour la formation qui le contient."""
+    for f in cv.get("formations", []):
+        for nom, annee in diplomes.items():
+            if nom.lower() in (f.get("diplome") or "").lower():
+                f["annee"] = annee
+    return cv
 
 
 def fabriquer(conn: psycopg.Connection, offre_id: int, langue: str | None = None) -> dict:
@@ -76,6 +96,11 @@ def fabriquer(conn: psycopg.Connection, offre_id: int, langue: str | None = None
     langue = langue or adaptation.detecter_langue(texte_offre)
     cv_source = _structure_cv(conn)
     cv_masque = identite.masquer(doc_cv["texte"], ident)
+    faits = scoring.faits()
+    if faits:  # faits validés par toi : guident la rédaction et passent le garde-fou de véracité
+        cv_masque += "\n\nFaits validés par le candidat :\n" + identite.masquer(
+            "\n".join(f"- {x}" for x in faits), ident
+        )
     lm_masque = identite.masquer(doc_lm["texte"], ident) if doc_lm else ""
     sensibles = [ident.get("nom"), ident.get("email"), ident.get("telephone")]
     verifier_masque(cv_masque, sensibles)
@@ -134,7 +159,7 @@ def _produire(
     motifs = []
     if compat["score"] < seuils["ats_friendly_min"]:
         motifs.append(f"compatibilité ATS {compat['score']}/100 (< {seuils['ats_friendly_min']})")
-    if matching["score_matching"] < float(origine):
+    if matching["score_matching"] < float(origine) - TOLERANCE_MATCHING:
         motifs.append(
             f"matching {matching['score_matching']} inférieur au CV d'origine ({origine})"
         )

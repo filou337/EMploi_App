@@ -79,3 +79,7 @@ secteurs:
 faits:
   - 5 missions de data analyse menées
   - travail en méthode Agile Kanban
+
+# Diplômes obtenus depuis le CV déposé : l'année remplace « En cours » dans les documents générés.
+diplomes_obtenus:
+  "Master Data": "2024-2026"
