@@ -22,17 +22,18 @@ from app import activite, envoi
 from app.db import connexion
 from app.generation import identite
 
-_ANGLAIS = re.compile(
-    r"\b(engineer|analyst|developer|manager|consultant|data scientist)\b", re.IGNORECASE
-)
 _ROBOT = re.compile(
     r"no-?reply|ne-?pas-?repondre|donotreply|notification|mailer|postmaster", re.IGNORECASE
 )
 
 
 def langue(r: dict) -> str:
-    poste = r.get("poste") or r.get("offre_intitule") or ""
-    return "en" if _ANGLAIS.search(poste) and not re.search(r"[éèà]", poste) else "fr"
+    """Français par défaut. Anglais seulement si l'ANNONCE est rédigée en anglais : un intitulé
+    « Data Analyst » ne dit rien (les offres françaises ont presque toutes un titre anglais)."""
+    from app.generation.adaptation import detecter_langue
+
+    texte = r.get("offre_texte") or ""
+    return detecter_langue(texte) if len(texte) >= 300 else "fr"
 
 
 def texte_relance(r: dict, ident: dict, lang: str = "fr") -> tuple[str, str]:
@@ -133,8 +134,8 @@ def interdite_dans_le_fil(boite: str | None, fil: str | None) -> str | None:
 def dues(conn: psycopg.Connection) -> list[dict]:
     return conn.execute(
         """
-        SELECT r.*, c.boite, c.gmail_thread_id FROM v_relances r
-        JOIN candidatures c ON c.id = r.id
+        SELECT r.*, c.boite, c.gmail_thread_id, o.texte AS offre_texte FROM v_relances r
+        JOIN candidatures c ON c.id = r.id LEFT JOIN offres o ON o.id = c.offre_id
         WHERE r.postule_le >= date_trunc('month', current_date) - interval '1 month'
           AND r.contact_email IS NOT NULL
         ORDER BY r.due_le, r.id

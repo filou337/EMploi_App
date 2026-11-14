@@ -454,7 +454,6 @@ async function vueCandidatures(v) {
 }
 
 // --- Relances (J+7, J+14) : texte prêt, envoyé par toi depuis ta messagerie ---------------------
-const ANGLAIS = /\b(engineer|analyst|developer|manager|consultant|data scientist)\b/i;
 
 function texteRelance(r, ident, langue) {
   const nom = ident.nom || "", tel = ident.telephone ? `\n${ident.telephone}` : "";
@@ -491,7 +490,7 @@ async function afficherRelances() {
     <p class="note">J+7 après la candidature, puis J+14. Celles qui ont une adresse de recruteur partent <strong>automatiquement</strong>
       au prochain passage (candidatures du mois en cours et du mois dernier) ; les autres : envoie le texte depuis ta messagerie, puis « J'ai relancé ».</p>
     <ul class="liste">${rows.map((r) => {
-      const langue = ANGLAIS.test(r.poste || r.offre_intitule || "") && !/[éèà]/.test(r.poste || "") ? "en" : "fr";
+      const langue = "fr"; // un intitulé anglais (« Data Analyst ») ne dit pas que l'entreprise écrit en anglais
       const t = texteRelance(r, ident, langue);
       textes[r.id] = t;
       const mailto = `mailto:${encodeURIComponent(r.contact_email || "")}?subject=${encodeURIComponent(t.objet)}&body=${encodeURIComponent(t.corps)}`;

@@ -65,8 +65,11 @@ def test_texte_relance_et_langue():
     assert relances.texte_relance(sans_poste, {"nom": "C"})[0] == "Relance – candidature"
     domaine = {"numero": 1, "entreprise": "werecruit", "poste": "Data Analyst", "postule_le": None}
     assert "rejoindre votre équipe" in relances.texte_relance(domaine, {"nom": "C"})[1]
-    assert relances.langue({"poste": "Senior Data Engineer"}) == "en"
-    assert relances.langue({"poste": "Ingénieur données"}) == "fr"
+    # Intitulé anglais d'une offre française : relance en français.
+    assert relances.langue({"poste": "Data analyst (F/H) - CDI"}) == "fr"
+    assert relances.langue({"poste": "Senior Data Engineer"}) == "fr"
+    annonce_en = "We are looking for a data engineer to join our team. You will build " * 6
+    assert relances.langue({"poste": "Data Engineer", "offre_texte": annonce_en}) == "en"
     assert not relances.adresse_humaine("no-reply@acme.fr")
     assert relances.adresse_humaine("cc-2dbb@candidates.welcomekit.co")
     assert relances.adresse_humaine("marie.durand@acme.fr")
