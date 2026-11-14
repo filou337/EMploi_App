@@ -8,8 +8,14 @@ Pour chaque offre au fiche complète, valide, notée par la grille V2 et sans co
    sinon adresse de recrutement de son site (jamais d'adresse devinée) ;
 4. mail d'accompagnement court, jovial et pro (Gemini, garde-fou de véracité), avec le lien du
    portfolio ; CV et LM en pièces jointes ;
-5. score < seuil (85) -> envoi automatique (interrupteur `envoi.auto`, 10 par jour au plus) ;
-   score ≥ seuil, pas de contact, dossier à revoir -> MIS DE CÔTÉ pour toi, tout prêt, sans envoi.
+5. envoi automatique (interrupteur `envoi.auto`, `envois_auto_par_jour` = 10 au plus) :
+   - score < seuil (85) : toujours ;
+   - score ≥ seuil : `envois_auto_haut_par_jour` (5) par jour, les suivants restent pour toi ;
+   - CV adapté moins bon que l'original (matching, compatibilité ATS, phrase retirée du CV) :
+     envoi avec ton CV d'ORIGINE et la LM adaptée ;
+6. MIS DE CÔTÉ pour toi, tout prêt, sans envoi : lettre à relire (phrase retirée de la LM),
+   score ≥ seuil au-delà du quota du jour, ou aucun contact publié — dans ce dernier cas un
+   KIT FORMULAIRE est prêt (lien, champs pré-remplis, message) pour postuler sur son site.
 
 Usage :  python -m app.agents.candidature_auto
 """
@@ -17,6 +23,7 @@ Usage :  python -m app.agents.candidature_auto
 import re
 
 import psycopg
+from psycopg.types.json import Jsonb
 
 from app import activite, criteres, envoi, llm, scoring
 from app.ats import service as ats
@@ -196,7 +203,7 @@ def candidates(conn: psycopg.Connection, minimum: float, limite: int) -> list[di
     return conn.execute(
         """
         SELECT o.id, o.intitule, o.texte, o.score, o.url_fiche, o.url_cle, o.entreprise_id, o.contrat,
-               e.nom_affiche AS entreprise, e.site_web
+               e.nom_affiche AS entreprise, e.site_web, e.ats
         FROM offres o LEFT JOIN entreprises e ON e.id = o.entreprise_id
         WHERE o.fiche_complete AND o.statut_validite = 'valide' AND o.score IS NOT NULL
           AND o.score >= %s AND (o.motif IS NULL OR o.motif NOT LIKE 'contrainte%%')
@@ -226,7 +233,77 @@ def _mettre_de_cote(
     )
 
 
-def preparer(conn: psycopg.Connection, o: dict, seuil: float) -> dict:
+def lettre_a_relire(conn: psycopg.Connection, fabrication_id: int) -> bool:
+    """Le garde-fou de véracité a retiré une phrase de la LM : elle peut être bancale."""
+    v = conn.execute(
+        "SELECT verification FROM fabrications WHERE id = %s", (fabrication_id,)
+    ).fetchone()
+    retires = (((v and v["verification"]) or {}).get("lm") or {}).get("retires") or []
+    return any(r.get("ou") != "compétence" for r in retires if isinstance(r, dict))
+
+
+def hauts_du_jour(conn: psycopg.Connection, seuil: float, sauf: int = 0) -> int:
+    """Candidatures de score ≥ seuil parties (ou prêtes à partir) automatiquement aujourd'hui."""
+    return conn.execute(
+        "SELECT count(*) AS n FROM candidatures_auto WHERE score >= %s AND id <> %s"
+        " AND cree_le::date = current_date AND (statut = 'pret' OR"
+        " (statut = 'envoyee' AND envoi_id IN (SELECT id FROM envois WHERE automatique)))",
+        (seuil, sauf),
+    ).fetchone()["n"]
+
+
+_PLATEFORMES = {
+    "greenhouse": "Greenhouse",
+    "lever": "Lever",
+    "ashby": "Ashby",
+    "smartrecruiters": "SmartRecruiters",
+    "recruitee": "Recruitee",
+    "workday": "Workday",
+    "welcometothejungle": "Welcome to the Jungle",
+    "teamtailor": "Teamtailor",
+    "taleez": "Taleez",
+    "jobaffinity": "Jobaffinity",
+    "flatchr": "Flatchr",
+}
+
+
+def kit_formulaire(conn: psycopg.Connection, o: dict, lm_texte: str) -> dict:
+    """Tout ce qu'il faut pour remplir le formulaire de candidature de l'employeur."""
+    ident = identite.lire(conn)
+    form = criteres.lire(conn).get("formulaire") or {}
+    lien = next(
+        (u for u in (o.get("url_fiche"), o.get("url_cle")) if (u or "").startswith("http")), None
+    )
+    plateforme = (o.get("ats") or "").lower()
+    if not plateforme and lien:
+        plateforme = next((k for k in _PLATEFORMES if k in lien.lower()), "")
+    morceaux = (ident.get("nom") or "").split()
+    a_renseigner = "à renseigner (onglet Envois auto > Pour les formulaires)"
+    champs = [
+        ("Prénom", morceaux[0] if morceaux else ""),
+        ("Nom", " ".join(morceaux[1:])),
+        ("Mail", ident.get("email")),
+        ("Téléphone", ident.get("telephone")),
+        ("Ville", ident.get("ville")),
+        ("LinkedIn", ident.get("linkedin")),
+        ("Portfolio / site", ident.get("portfolio")),
+        ("Salaire souhaité (brut annuel)", form.get("salaire") or a_renseigner),
+        ("Disponibilité", form.get("disponibilite") or a_renseigner),
+        ("Autorisation de travail", form.get("autorisation") or a_renseigner),
+        ("Mobilité / télétravail", ident.get("mobilite") or form.get("mobilite")),
+        ("Comment avez-vous connu l'offre ?", form.get("source") or "Site carrières"),
+    ]
+    paragraphes = [x.strip() for x in (lm_texte or "").split("\n") if x.strip()]
+    return {
+        "lien": lien,
+        "plateforme": _PLATEFORMES.get(plateforme, plateforme.capitalize() or None),
+        "champs": [{"libelle": k, "valeur": v} for k, v in champs if v],
+        # Champ « motivation » des formulaires (souvent limité à ~1 500 caractères).
+        "motivation": "\n\n".join(paragraphes)[:1500],
+    }
+
+
+def preparer(conn: psycopg.Connection, o: dict, seuil: float, plafond_haut: int = 5) -> dict:
     """Dossier + mail pour une offre ; renvoie la ligne candidatures_auto (statut pret / mise_de_cote)."""
     from app.generation.fabrique import fabriquer
 
@@ -250,16 +327,36 @@ def preparer(conn: psycopg.Connection, o: dict, seuil: float) -> dict:
         " source_contact = %s WHERE id = %s",
         (fab["fabrication_id"], objet, corps, trouve and trouve[0], trouve and trouve[1], ca_id),
     )
-    motif = None
-    if float(o["score"]) >= seuil:
-        motif = f"score {float(o['score']):g} ≥ {seuil:g} : à envoyer par toi"
-    elif fab["statut"] != "ats_friendly":
-        motif = "dossier à relire : " + "; ".join(fab.get("motifs") or [])
-    elif trouve is None:
-        motif = "aucun contact publié par l'employeur : postule sur son site"
+    motif, cv_origine = None, False
+    if fab["statut"] != "ats_friendly":
+        # CV adapté moins bon que l'original : on joint ton CV d'origine (la LM reste adaptée).
+        # Une phrase retirée de la LM peut la rendre bancale : celle-là, tu la relis.
+        if lettre_a_relire(conn, fab["fabrication_id"]):
+            motif = "lettre à relire : " + "; ".join(fab.get("motifs") or [])
+        elif envoi.cv_origine_pdf(conn) is None:
+            motif = "dossier à relire : " + "; ".join(fab.get("motifs") or [])
+        else:
+            cv_origine = True
+    if (
+        motif is None
+        and float(o["score"]) >= seuil
+        and hauts_du_jour(conn, seuil, ca_id) >= plafond_haut
+    ):
+        motif = (
+            f"score {float(o['score']):g} ≥ {seuil:g} : à envoyer par toi"
+            f" ({plafond_haut} envois automatiques de ce niveau déjà faits aujourd'hui)"
+        )
+    kit = None
+    if motif is None and trouve is None:
+        kit = kit_formulaire(conn, o, lm_texte)
+        motif = "aucun contact publié par l'employeur : kit formulaire prêt, postule sur son site"
+    conn.execute(
+        "UPDATE candidatures_auto SET cv_origine = %s, kit = %s WHERE id = %s",
+        (cv_origine, Jsonb(kit) if kit else None, ca_id),
+    )
     if motif:
         _mettre_de_cote(conn, ca_id, o["id"], motif, o["entreprise"] or "?", o["intitule"])
-    return {"id": ca_id, "motif": motif}
+    return {"id": ca_id, "motif": motif, "cv_origine": cv_origine}
 
 
 def executer(conn: psycopg.Connection) -> dict:
@@ -286,12 +383,17 @@ def executer(conn: psycopg.Connection) -> dict:
             detail=f"note {float(o['score']):.0f}/100",
         )
         try:
-            r = preparer(conn, o, seuil)
+            r = preparer(conn, o, seuil, int(s.get("envois_auto_haut_par_jour", 5)))
             conn.commit()
             activite.fin(
                 aid,
                 "Dossier mis de côté pour toi" if r["motif"] else "Dossier prêt à envoyer",
-                r["motif"] or "CV + LM + mail prêts, contact publié trouvé",
+                r["motif"]
+                or (
+                    "CV d'origine (meilleur que l'adapté) + LM + mail prêts, contact publié trouvé"
+                    if r["cv_origine"]
+                    else "CV + LM + mail prêts, contact publié trouvé"
+                ),
             )
         except (llm.LLMIndisponible, FabricationImpossible) as e:
             activite.fin(aid, "Dossier reporté", str(e), erreur=True)

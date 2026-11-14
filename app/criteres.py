@@ -86,6 +86,7 @@ DEFAUTS: dict = {
         "spontanees_par_jour": 5,
         "envois_par_jour": 10,
         "envois_auto_par_jour": 10,  # candidatures envoyées automatiquement au plus par jour
+        "envois_auto_haut_par_jour": 5,  # dont score ≥ « fabrication » (85) ; les suivantes restent pour toi
         "envoi_auto_min": 50,  # score minimal pour une candidature automatique (sous le seuil « fabrication »)
         "candidatures_auto_par_passage": 3,  # dossiers préparés par passage (Gemini et Chrome sont lents)  # mails envoyés depuis Gmail au plus par jour (toujours sur ton clic)  # brouillons de candidature spontanée préparés au plus par jour  # un rapport récapitulatif tous les N jours
     },
@@ -94,6 +95,9 @@ DEFAUTS: dict = {
     "envoi": {"actif": False, "auto": False},
     # Coordonnées imprimées sur les CV et LM générés (jamais envoyées au LLM).
     "identite": {},
+    # Réponses des formulaires de candidature (salaire, disponibilité…) : jamais imprimées
+    # sur les CV, seulement proposées dans le kit formulaire.
+    "formulaire": {},
 }
 
 

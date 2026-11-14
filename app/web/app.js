@@ -13,16 +13,44 @@ const COULEURS = {
   postule: "sarcelle", relance: "sarcelle", a_postuler: "ambre", reponse_positive: "vert",
   refus: "rouge", sans_suite: "", ignore: "",
 };
+// Les agents, dans l'ordre d'un passage (toutes les 30 min). « mission » = la fiche détaillée du salon.
 const AGENTS = {
-  collecte: { nom: "Agent Recherche", role: "lit les alertes Gmail et extrait les offres", c: "#087f8c" },
-  validite: { nom: "Agent Validité", role: "repère les doublons et les offres trop anciennes", c: "#173448" },
-  fiches: { nom: "Agent Fiches", role: "cherche la fiche complète chez l'employeur", c: "#9a641d" },
-  suivi: { nom: "Agent Suivi", role: "relit les envois, accusés et réponses", c: "#2d7a4f" },
-  veille: { nom: "Agent Veille", role: "surveille le site carrières de tes entreprises cibles", c: "#5b4b8a" },
-  candidatures_auto: { nom: "Agent Candidatures", role: "prépare CV + LM + mail, envoie sous le seuil, met de côté au-dessus", c: "#2f5d8a" },
-  spontanees: { nom: "Agent Spontanées", role: "prépare des mails de candidature spontanée (envoyés par toi)", c: "#8a4b6b" },
-  rapport: { nom: "Agent Rapport", role: "fait le point tous les 3 jours", c: "#4a6b2f" },
-  matching: { nom: "Agent Matching", role: "compare ton CV aux offres et qualifie les meilleures", c: "#a3352b" },
+  collecte: { nom: "Agent Recherche", role: "lit les alertes Gmail et extrait les offres", c: "#087f8c", mission: [
+    "Lit les alertes emploi reçues dans Gmail (2 derniers jours).",
+    "Extrait chaque offre (intitulé, entreprise, lien) et l'ajoute à la base, sans doublon.",
+    "N'envoie rien : la lecture de Gmail est en lecture seule."] },
+  suivi: { nom: "Agent Suivi", role: "relit les envois, accusés et réponses", c: "#2d7a4f", mission: [
+    "Relit tes mails des 3 derniers jours : candidatures envoyées, accusés de réception, refus, invitations.",
+    "Un accusé de réception confirme l'envoi : l'offre passe « Envoyée ».",
+    "Te notifie chaque réponse et prépare les relances (J+7 puis J+14), que tu envoies.",
+    "Classe « sans suite » une candidature restée sans réponse 30 jours après la dernière relance."] },
+  validite: { nom: "Agent Validité", role: "repère les doublons et les offres trop anciennes", c: "#173448", mission: [
+    "Écarte les doublons (même offre vue dans plusieurs alertes).",
+    "Marque les offres trop anciennes."] },
+  fiches: { nom: "Agent Fiches", role: "cherche la fiche complète chez l'employeur", c: "#9a641d", mission: [
+    "Retrouve l'annonce complète sur le site carrières de l'employeur (Greenhouse, Lever, Ashby…).",
+    "Offre retirée du site : « expirée ». Sans fiche complète, une offre est plafonnée à 84/100.",
+    "Ne consulte jamais LinkedIn ni Indeed."] },
+  veille: { nom: "Agent Veille", role: "surveille le site carrières de tes entreprises cibles", c: "#5b4b8a", mission: [
+    "Surveille le site carrières des entreprises de ta liste de veille.",
+    "Ajoute leurs nouveaux postes qui passent tes critères, signale ceux qui changent ou disparaissent."] },
+  matching: { nom: "Agent Matching", role: "compare ton CV aux offres et qualifie les meilleures", c: "#a3352b", mission: [
+    "Fait entrer dans le pipeline les offres qui passent tes critères (poste, contrat, lieu).",
+    "Compare ton CV à chaque fiche complète (Gemini) : note sur 100, classe A / B / C et motif.",
+    "Les classes A passent « Qualifiée », avec notification."] },
+  candidatures_auto: { nom: "Agent Candidatures", role: "prépare CV + LM + mail et envoie au recruteur", c: "#2f5d8a", mission: [
+    "Pour chaque offre CDI / CDD notée ≥ 50 : CV et lettre adaptés, mail d'accompagnement avec ton portfolio.",
+    "Cherche l'adresse publiée par l'employeur (fiche de l'offre, contact connu, page recrutement) — jamais d'adresse devinée.",
+    "Envoie automatiquement depuis ta boîte Gmail : 10 par jour au plus, dont 5 notées ≥ 85 ; jamais deux fois le même employeur en 3 mois.",
+    "CV adapté moins bon que ton CV d'origine : il envoie ton CV d'origine avec la lettre adaptée.",
+    "Met de côté pour toi : lettre à relire, notes ≥ 85 au-delà de 5 par jour, ou employeur sans adresse (kit formulaire prêt)."] },
+  spontanees: { nom: "Agent Spontanées", role: "prépare des mails de candidature spontanée (envoyés par toi)", c: "#8a4b6b", mission: [
+    "Cible les entreprises de ta veille dont le site est connu.",
+    "Trouve une adresse RH publique et rédige le mail (5 brouillons par jour au plus).",
+    "N'envoie rien : tu envoies depuis l'onglet Spontanées."] },
+  rapport: { nom: "Agent Rapport", role: "fait le point tous les 3 jours", c: "#4a6b2f", mission: [
+    "Tous les 3 jours : offres repérées, candidatures envoyées, réponses, relances dues, taux de réponse.",
+    "Lisible dans l'appli (et sur le téléphone), signalé par une notification."] },
 };
 const ETAPES = [
   ["reperee", "Repérée", "Dans tes critères. Fiche complète = matching automatique."],
@@ -729,7 +757,8 @@ function htmlSalon(acts, journal) {
     const d = derniere[cle], actif = agentsActifs.has(cle);
     return `<div class="carte">${avatar(a)}<h3 style="margin-top:10px">${esc(a.nom)}
         ${actif ? '<span class="etiquette ambre">au travail</span>' : ""}</h3><p class="note">${esc(a.role)}</p>
-      <p class="sous">${d ? `${actif ? "En cours" : "Dernière action"} : ${esc(d.action)} · ${depuis(d.cree_le)}` : "Pas encore d'activité."}</p></div>`;
+      <p class="sous">${d ? `${actif ? "En cours" : "Dernière action"} : ${esc(d.action)} · ${depuis(d.cree_le)}` : "Pas encore d'activité."}</p>
+      ${a.mission ? `<details><summary class="note">Sa mission</summary><ul class="sous">${a.mission.map((m) => `<li>${esc(m)}</li>`).join("")}</ul></details>` : ""}</div>`;
   }).join("");
   const fil = acts.filter((x) => x.action !== "Au travail" || x.statut !== "fait").slice(0, 60);
   return `<div class="entete"><div><h1>Le salon des agents.</h1>
@@ -858,24 +887,50 @@ async function vueSpontanees(v) {
 const STATUT_AUTO = { pret: ["ambre", "prête (envoi au prochain passage)"], envoyee: ["vert", "envoyée"],
   mise_de_cote: ["sarcelle", "mise de côté pour toi"], ignoree: ["", "ignorée"], erreur: ["rouge", "erreur"] };
 
+// Kit formulaire : employeur sans adresse publiée, tout est prêt pour postuler sur son site.
+function blocKit(r, pieces) {
+  const kit = r.kit;
+  if (!kit) return "";
+  const lien = lienSur(kit.lien);
+  const copier = (val) => `<button class="bouton petit" data-a="copier-kit" data-valeur="${esc(val)}">Copier</button>`;
+  return `<div class="section" style="border-top:1px solid var(--ligne, #dde3e8);padding-top:12px">
+    <h3>Kit formulaire${kit.plateforme ? ` <span class="note">(${esc(kit.plateforme)})</span>` : ""}</h3>
+    <p class="note">1. Ouvre le formulaire · 2. Copie chaque réponse · 3. Joins le CV et la LM · 4. Valide, puis clique « J'ai postulé ».</p>
+    <div class="actions">${lien ? `<a class="bouton principal" href="${lien}" target="_blank" rel="noopener">Ouvrir le formulaire</a>` : ""} ${pieces}</div>
+    <ul class="liste section">${(kit.champs || []).map((c) => `<li><span>${esc(c.libelle)}<div class="sous">${esc(c.valeur)}</div></span>${copier(c.valeur)}</li>`).join("")}</ul>
+    ${kit.motivation ? `<label class="section">Motivation (champ libre du formulaire)<textarea class="champ" rows="6" readonly>${esc(kit.motivation)}</textarea></label>
+      <div class="actions">${copier(kit.motivation)}</div>` : ""}
+    <div class="actions section"><button class="bouton principal" data-a="postule-kit" data-offre="${r.offre_id}">J'ai postulé</button></div></div>`;
+}
+
 async function vueEnvoisAuto(v) {
   const [rows, env, params] = await Promise.all([api("candidatures-auto"), api("envoi").catch(() => ({})), api("parametres")]);
   const seuil = (params.seuils || {}).fabrication ?? 85, mini = (params.seuils || {}).envoi_auto_min ?? 50;
+  const hautJour = (params.seuils || {}).envois_auto_haut_par_jour ?? 5, form = params.formulaire || {};
   const cote = rows.filter((r) => r.statut === "mise_de_cote"), autres = rows.filter((r) => r.statut !== "mise_de_cote");
   const pieces = (r) => (r.fichiers || []).filter((f) => f.format === "pdf")
     .map((f) => `<button class="bouton petit" data-telecharger="fichiers/${f.id}">${f.type === "cv" ? "CV" : "LM"} (PDF)</button>`).join(" ");
   v.innerHTML = `<div class="entete"><div><h1>Candidatures automatiques.</h1>
-      <p>Pour chaque offre notée entre ${mini} et ${seuil - 1} sans contrainte violée : CV et lettre adaptés, mail jovial et pro avec ton portfolio,
-      envoyé automatiquement au contact publié par l'employeur (${env.plafond_auto ?? 10} par jour au plus, jamais deux fois le même employeur en 3 mois).
-      À partir de ${seuil}, ou sans contact fiable, tout est préparé et <strong>mis de côté pour toi</strong>, sans envoi.</p></div></div>
+      <p>Pour chaque offre CDI / CDD notée ${mini} ou plus, sans contrainte violée : CV et lettre adaptés, mail jovial et pro avec ton portfolio,
+      envoyé automatiquement au contact publié par l'employeur (${env.plafond_auto ?? 10} par jour au plus, dont ${hautJour} notées ${seuil} ou plus ;
+      jamais deux fois le même employeur en 3 mois). Si le CV adapté est moins bon que ton CV d'origine, c'est ton CV d'origine qui part.
+      Lettre à relire, notes ≥ ${seuil} au-delà de ${hautJour} par jour, ou employeur sans adresse publiée (kit formulaire prêt) :
+      tout est <strong>mis de côté pour toi</strong>, sans envoi.</p></div></div>
     <div class="carte"><h3>Envoi automatique</h3>${env.autorise
       ? `<label class="actions"><input type="checkbox" id="auto-actif" ${env.auto ? "checked" : ""}>
           <span>${env.auto ? `Activé : envoi depuis <strong>${esc(env.adresse)}</strong> — ${env.auto_aujourdhui}/${env.plafond_auto} aujourd'hui`
             : "Désactivé : rien ne part tout seul (les dossiers ne sont pas préparés)"}</span></label>`
       : '<p class="note">Autorise d\'abord l\'envoi sur le PC : <code>python -m app.envoi --autoriser</code>.</p>'}</div>
+    <details class="carte section"><summary><strong>Pour les formulaires</strong> <span class="note">— réponses reprises dans les kits (jamais imprimées sur tes CV)</span></summary>
+      <form class="formulaire section" id="form-formulaire">
+        <div class="ligne"><label>Salaire souhaité (brut annuel)<input class="champ" name="salaire" value="${esc(form.salaire || "")}" placeholder="ex. 38 000 – 42 000 €"></label>
+          <label>Disponibilité<input class="champ" name="disponibilite" value="${esc(form.disponibilite || "")}" placeholder="ex. immédiate"></label></div>
+        <div class="ligne"><label>Autorisation de travail<input class="champ" name="autorisation" value="${esc(form.autorisation || "")}" placeholder="ex. autorisé(e) à travailler en France"></label>
+          <label>Comment as-tu connu l'offre ?<input class="champ" name="source" value="${esc(form.source || "")}" placeholder="Site carrières"></label></div>
+        <div class="actions"><button class="bouton principal">Enregistrer</button></div></form></details>
     <div class="section">${cote.length ? `<h3>Mises de côté pour toi (${cote.length})</h3>` + cote.map((r) => `<div class="carte" data-id="${r.id}">
         <h3>${esc(r.entreprise || "?")} — ${esc(r.intitule)} <span class="note">${r.score != null ? Math.round(r.score) + "/100" : ""}</span></h3>
-        <p class="note">${esc(r.motif || "")}${r.destinataire ? ` · contact : <strong>${esc(r.destinataire)}</strong>` : ""}
+        <p class="note">${esc(r.motif || "")}${r.cv_origine ? ' · <span class="etiquette">CV d\'origine joint</span>' : ""}${r.destinataire ? ` · contact : <strong>${esc(r.destinataire)}</strong>` : ""}
           ${lienSur(r.url_fiche || r.url_cle) ? ` · <a href="${lienSur(r.url_fiche || r.url_cle)}" target="_blank" rel="noopener">voir l'offre</a>` : ""}</p>
         <div class="formulaire"><label>Objet<input class="champ" data-champ="objet" value="${esc(r.objet || "")}"></label>
           <label>Message<textarea class="champ" data-champ="corps" rows="12">${esc(r.corps || "")}</textarea></label></div>
@@ -883,18 +938,23 @@ async function vueEnvoisAuto(v) {
           ${r.destinataire && env.actif ? '<button class="bouton principal" data-a="envoyer">Envoyer depuis Gmail</button>' : ""}
           ${r.destinataire ? `<a class="bouton" data-mailto="${esc(r.destinataire)}">Ouvrir dans ma messagerie</a>` : ""}
           <button class="bouton petit" data-a="copier">Copier le texte</button> ${pieces(r)}
-          <button class="bouton petit" data-a="ignorer">Ignorer</button></div></div>`).join("")
+          <button class="bouton petit" data-a="ignorer">Ignorer</button></div>${blocKit(r, pieces(r))}</div>`).join("")
       : '<div class="carte vide">Rien de mis de côté pour l\'instant.</div>'}</div>
     ${autres.length ? `<div class="carte section"><h3>Historique</h3><ul class="fil">${autres.map((r) => `<li><div>
       <span class="etiquette ${STATUT_AUTO[r.statut]?.[0] ?? ""}">${esc(STATUT_AUTO[r.statut]?.[1] ?? r.statut)}</span>
       <strong>${esc(r.entreprise || "?")}</strong> ${esc(r.intitule)} <span class="note">${r.score != null ? Math.round(r.score) + "/100" : ""}</span>
-      <div class="sous">${jour(r.envoyee_le || r.cree_le)}${r.destinataire ? ` · ${esc(r.destinataire)}` : ""}${r.erreur ? ` · ${esc(r.erreur.slice(0, 120))}` : ""}</div></div></li>`).join("")}</ul></div>` : ""}`;
+      <div class="sous">${jour(r.envoyee_le || r.cree_le)}${r.destinataire ? ` · ${esc(r.destinataire)}` : ""}${r.cv_origine ? " · CV d'origine" : ""}${r.erreur ? ` · ${esc(r.erreur.slice(0, 120))}` : ""}</div></div></li>`).join("")}</ul></div>` : ""}`;
   const valeurs = (carte) => ({ objet: $("[data-champ=objet]", carte).value, corps: $("[data-champ=corps]", carte).value });
   v.querySelectorAll("[data-mailto]").forEach((a) => {
     const carte = a.closest("[data-id]");
     const maj = () => { const m = valeurs(carte);
       a.href = `mailto:${encodeURIComponent(a.dataset.mailto)}?subject=${encodeURIComponent(m.objet)}&body=${encodeURIComponent(m.corps)}`; };
     maj(); carte.addEventListener("input", maj);
+  });
+  $("#form-formulaire").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    try { await envoyer("parametres", "PUT", { formulaire: Object.fromEntries(new FormData(e.target)) }); toast("Réponses enregistrées (utilisées par les prochains kits)."); }
+    catch (err) { toast(err.message); }
   });
   $("#auto-actif")?.addEventListener("change", async (e) => {
     if (e.target.checked && !confirm("Activer l'envoi AUTOMATIQUE de candidatures à ton nom, sans relecture ?")) { e.target.checked = false; return; }
@@ -906,6 +966,11 @@ async function vueEnvoisAuto(v) {
     if (!b) return;
     const carte = b.closest("[data-id]"), id = carte.dataset.id, a = b.dataset.a;
     try {
+      if (a === "copier-kit") { await navigator.clipboard.writeText(b.dataset.valeur); toast("Copié."); return; }
+      if (a === "postule-kit") {
+        b.disabled = true; await envoyer(`offres/${b.dataset.offre}/postule`, "POST");
+        toast("Candidature ajoutée au suivi (relance prévue)."); router(); return;
+      }
       if (a === "copier") { const m = valeurs(carte); await navigator.clipboard.writeText(`${m.objet}\n\n${m.corps}`); toast("Texte copié."); return; }
       if (a === "envoyer") {
         if (!confirm("Envoyer cette candidature maintenant, avec le CV et la lettre adaptés ?")) return;

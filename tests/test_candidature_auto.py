@@ -1,5 +1,6 @@
 import psycopg
 import pytest
+from psycopg.types.json import Jsonb
 
 from app import criteres, envoi
 from app.agents import candidature_auto as ca
@@ -52,7 +53,7 @@ def base(monkeypatch, tmp_path):
         c.execute("SELECT 1 FROM candidatures_auto LIMIT 1")
     except (psycopg.OperationalError, psycopg.errors.UndefinedTable) as e:
         pytest.skip(f"Base locale injoignable ou non migrée : {e}")
-    avant = {k: criteres.lire(c)[k] for k in ("envoi", "seuils")}
+    avant = {k: criteres.lire(c)[k] for k in ("envoi", "seuils", "formulaire")}
     ids: dict = {"offres": []}
     yield c, ids
     c.rollback()
@@ -83,12 +84,13 @@ def _offre(c, ids, eid, score, motif=None, url="test:auto"):
     return oid
 
 
-def _faux_dossier(c):
+def _faux_dossier(c, statut="ats_friendly", retires_lm=()):
     def fabriquer(conn, offre_id, langue=None):
         fid = conn.execute(
-            "INSERT INTO fabrications (offre_id, langue, statut, contenu) VALUES (%s, 'fr', 'ats_friendly',"
-            ' \'{"lm": {"paragraphes": ["Lettre."]}}\') RETURNING id',
-            (offre_id,),
+            "INSERT INTO fabrications (offre_id, langue, statut, contenu, verification)"
+            ' VALUES (%s, \'fr\', %s, \'{"lm": {"paragraphes": ["Lettre.", "Suite."]}}\', %s)'
+            " RETURNING id",
+            (offre_id, statut, Jsonb({"cv": {"retires": []}, "lm": {"retires": list(retires_lm)}})),
         ).fetchone()["id"]
         for t in ("cv", "lm"):
             conn.execute(
@@ -97,7 +99,10 @@ def _faux_dossier(c):
                 (fid, t, f"{t.upper()}_test.pdf", b"%PDF-1.4"),
             )
         conn.commit()
-        return {"fabrication_id": fid, "statut": "ats_friendly", "motifs": []}
+        motifs = (
+            [] if statut == "ats_friendly" else ["matching 63.3 inférieur au CV d'origine (83.3)"]
+        )
+        return {"fabrication_id": fid, "statut": statut, "motifs": motifs}
 
     return fabriquer
 
@@ -123,7 +128,14 @@ def test_envoi_sous_le_seuil_et_mise_de_cote_au_dessus(base, monkeypatch):
     )
     seuils = criteres.lire(c)["seuils"]
     criteres.ecrire(
-        c, "seuils", {**seuils, "candidatures_auto_par_passage": 10, "envoi_auto_min": 50}
+        c,
+        "seuils",
+        {
+            **seuils,
+            "candidatures_auto_par_passage": 10,
+            "envoi_auto_min": 50,
+            "envois_auto_haut_par_jour": 0,
+        },
     )
     ids["entreprise"] = eid = c.execute(
         "INSERT INTO entreprises (nom_norm, nom_affiche) VALUES ('test auto acme', 'Acme Auto') RETURNING id"
@@ -208,3 +220,109 @@ def test_civilite_jamais_devinee():
     assert ca.salutation_sure("Madame Durand,", "Envoyez votre CV.") == "Madame, Monsieur,"
     assert ca.salutation_sure("Bonjour Sophie Martin,", offre) == "Bonjour Sophie Martin,"
     assert ca.salutation_sure("", offre) == "Madame, Monsieur,"
+
+
+def _preparer_base(base, monkeypatch, haut_par_jour=5, **dossier):
+    c, ids = base
+    faux = FauxGmail()
+    monkeypatch.setattr(envoi, "_service", lambda: faux)
+    monkeypatch.setattr("app.generation.fabrique.fabriquer", _faux_dossier(c, **dossier))
+    monkeypatch.setattr(
+        ca, "rediger", lambda conn, o, lm: ("Candidature – Data Analyst", "Bonjour,\n\nTexte.", {})
+    )
+    monkeypatch.setattr(ca.llm, "disponible", lambda: True)
+    monkeypatch.setattr(ca, "candidature_recente", lambda conn, eid: None)
+    monkeypatch.setattr(
+        envoi,
+        "cv_origine_pdf",
+        lambda conn: {"nom_fichier": "CV_origine.pdf", "contenu": b"%PDF-o"},
+    )
+    criteres.ecrire(
+        c, "envoi", {"autorise_pour": "camille@example.com", "auto": True, "actif": False}
+    )
+    seuils = criteres.lire(c)["seuils"]
+    criteres.ecrire(
+        c,
+        "seuils",
+        {
+            **seuils,
+            "candidatures_auto_par_passage": 10,
+            "envoi_auto_min": 50,
+            "envois_auto_haut_par_jour": haut_par_jour,
+        },
+    )
+    ids["entreprise"] = eid = c.execute(
+        "INSERT INTO entreprises (nom_norm, nom_affiche) VALUES ('test auto acme', 'Acme Auto') RETURNING id"
+    ).fetchone()["id"]
+    return c, ids, eid, faux
+
+
+def _lignes(c, ids):
+    return {
+        r["offre_id"]: r
+        for r in c.execute(
+            "SELECT offre_id, statut, motif, cv_origine, kit FROM candidatures_auto"
+            " WHERE offre_id = ANY(%s)",
+            (ids["offres"],),
+        )
+    }
+
+
+def test_scores_hauts_envoyes_dans_la_limite_du_jour(base, monkeypatch):
+    c, ids, eid, faux = _preparer_base(base, monkeypatch, haut_par_jour=1)
+    o90 = _offre(c, ids, eid, 90, url="test:auto:90")
+    o88 = _offre(c, ids, eid, 88, url="test:auto:88")
+    c.commit()
+    bilan = ca.executer(c)
+    lignes = _lignes(c, ids)
+    assert lignes[o90]["statut"] == "envoyee"
+    assert lignes[o88]["statut"] == "mise_de_cote" and "déjà faits" in lignes[o88]["motif"]
+    assert bilan["envoyées"] == 1 and len(faux.envoyes) == 1
+
+
+def test_cv_origine_joint_quand_le_cv_adapte_est_moins_bon(base, monkeypatch):
+    c, ids, eid, faux = _preparer_base(base, monkeypatch, statut="a_revoir")
+    oid = _offre(c, ids, eid, 70, url="test:auto:origine")
+    c.commit()
+    assert ca.executer(c)["envoyées"] == 1
+    assert _lignes(c, ids)[oid]["cv_origine"] is True
+    message = faux.envoyes[0]["raw"]
+    import base64
+
+    brut = base64.urlsafe_b64decode(message).decode(errors="ignore")
+    assert "CV_origine.pdf" in brut and "CV_test.pdf" not in brut and "LM_test.pdf" in brut
+
+
+def test_lettre_retouchee_par_le_garde_fou_reste_pour_toi(base, monkeypatch):
+    c, ids, eid, faux = _preparer_base(
+        base, monkeypatch, statut="a_revoir", retires_lm=[{"ou": "paragraphe", "texte": "x"}]
+    )
+    oid = _offre(c, ids, eid, 70, url="test:auto:lettre")
+    c.commit()
+    assert ca.executer(c)["envoyées"] == 0
+    ligne = _lignes(c, ids)[oid]
+    assert ligne["statut"] == "mise_de_cote" and ligne["motif"].startswith("lettre à relire")
+    assert not faux.envoyes
+
+
+def test_kit_formulaire_sans_contact_publie(base, monkeypatch):
+    c, ids, eid, _ = _preparer_base(base, monkeypatch)
+    criteres.ecrire(c, "formulaire", {"salaire": "40 000 €", "disponibilite": "immédiate"})
+    oid = c.execute(
+        "INSERT INTO offres (url_cle, cle_floue, source, intitule, entreprise_id, texte, fiche_complete,"
+        " statut_validite, score, classe, url_fiche, etape) VALUES ('test:auto:kit', 'x', 'manuelle',"
+        " 'Data Analyst', %s, 'Missions SQL et Power BI, postulez en ligne.', TRUE, 'valide', 70, 'B',"
+        " 'https://jobs.lever.co/acme/123', 'reperee') RETURNING id",
+        (eid,),
+    ).fetchone()["id"]
+    ids["offres"].append(oid)
+    c.commit()
+    assert ca.executer(c)["envoyées"] == 0
+    ligne = _lignes(c, ids)[oid]
+    assert ligne["statut"] == "mise_de_cote" and "kit formulaire" in ligne["motif"]
+    kit = ligne["kit"]
+    assert kit["lien"] == "https://jobs.lever.co/acme/123" and kit["plateforme"] == "Lever"
+    champs = {x["libelle"]: x["valeur"] for x in kit["champs"]}
+    assert champs["Salaire souhaité (brut annuel)"] == "40 000 €"
+    assert champs["Disponibilité"] == "immédiate"
+    assert kit["motivation"] == "Lettre.\n\nSuite."

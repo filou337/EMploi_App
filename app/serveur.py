@@ -247,6 +247,12 @@ def j_ai_postule(offre_id: int, conn: Conn = Depends(db)):
     conn.execute(
         "UPDATE offres SET etape = 'envoyee', etape_maj_le = now() WHERE id = %s", (o["id"],)
     )
+    # Formulaire soumis par toi : la candidature préparée sort des « mises de côté ».
+    conn.execute(
+        "UPDATE candidatures_auto SET statut = 'envoyee', envoyee_le = now(), candidature_id = %s,"
+        " motif = NULL WHERE offre_id = %s AND statut IN ('pret', 'mise_de_cote')",
+        (row["id"], o["id"]),
+    )
     return {"candidature_id": row["id"]}
 
 
@@ -983,12 +989,13 @@ class Parametres(BaseModel):
     seuils: dict | None = None
     veille: dict | None = None
     identite: dict | None = None
+    formulaire: dict | None = None
 
 
 @app.put("/api/parametres")
 def ecrire_parametres(p: Parametres, conn: Conn = Depends(db)):
     actuels = criteres.lire(conn)
-    for cle in ("criteres", "seuils", "veille", "identite"):
+    for cle in ("criteres", "seuils", "veille", "identite", "formulaire"):
         valeur = getattr(p, cle)
         if valeur is not None:
             criteres.ecrire(conn, cle, {**actuels[cle], **valeur})

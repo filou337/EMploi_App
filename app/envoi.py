@@ -311,6 +311,14 @@ def envoyer_relance(conn: psycopg.Connection, cid: int, objet: str, corps: str) 
     return {**r, "numero": rel["numero"]}
 
 
+def cv_origine_pdf(conn: psycopg.Connection) -> dict | None:
+    """Ton CV par défaut, s'il est en PDF (joint quand le CV adapté est moins bon)."""
+    return conn.execute(
+        "SELECT nom_fichier, contenu FROM documents WHERE type = 'cv' AND par_defaut"
+        " AND langue = 'fr' AND format = 'pdf' AND contenu IS NOT NULL"
+    ).fetchone()
+
+
 def envoyer_candidature(
     conn: psycopg.Connection,
     ca_id: int,
@@ -336,12 +344,18 @@ def envoyer_candidature(
     if opposee:
         raise EnvoiImpossible("Ce contact a demandé à ne plus être sollicité.")
     pieces = conn.execute(
-        "SELECT nom AS nom_fichier, contenu FROM dossier_fichiers WHERE fabrication_id = %s"
+        "SELECT type, nom AS nom_fichier, contenu FROM dossier_fichiers WHERE fabrication_id = %s"
         " AND format = 'pdf' ORDER BY type",
         (ca["fabrication_id"],),
     ).fetchall()
     if not pieces:
         raise EnvoiImpossible("CV et LM adaptés introuvables pour cette offre.")
+    if ca["cv_origine"]:
+        # Le CV adapté était moins bon que l'original : on joint ton CV d'origine.
+        origine = cv_origine_pdf(conn)
+        if origine is None:
+            raise EnvoiImpossible("Ton CV d'origine (PDF) est introuvable : dépose-le à nouveau.")
+        pieces = [dict(origine), *(p for p in pieces if p["type"] != "cv")]
     conn.execute(
         "UPDATE candidatures_auto SET objet = %s, corps = %s WHERE id = %s", (objet, corps, ca_id)
     )
