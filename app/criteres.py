@@ -86,13 +86,15 @@ DEFAUTS: dict = {
         "spontanees_par_jour": 5,
         "envois_par_jour": 10,
         "envois_auto_par_jour": 10,  # candidatures envoyées automatiquement au plus par jour
+        "relances_auto_par_jour": 15,  # relances envoyées automatiquement au plus par jour
         "envois_auto_haut_par_jour": 5,  # dont score ≥ « fabrication » (85) ; les suivantes restent pour toi
         "envoi_auto_min": 50,  # score minimal pour une candidature automatique (sous le seuil « fabrication »)
         "candidatures_auto_par_passage": 3,  # dossiers préparés par passage (Gemini et Chrome sont lents)  # mails envoyés depuis Gmail au plus par jour (toujours sur ton clic)  # brouillons de candidature spontanée préparés au plus par jour  # un rapport récapitulatif tous les N jours
     },
     "veille": {"frequence_minutes": 60, "entreprises_par_defaut": 5, "initialisee": False},
     # Envoi en 1 clic depuis Gmail : désactivé tant que tu ne l'actives pas (onglet Spontanées).
-    "envoi": {"actif": False, "auto": False},
+    # relances_auto : relances dues envoyées sans ton clic (activé à ta demande du 14/11/2026).
+    "envoi": {"actif": False, "auto": False, "relances_auto": True},
     # Coordonnées imprimées sur les CV et LM générés (jamais envoyées au LLM).
     "identite": {},
     # Réponses des formulaires de candidature (salaire, disponibilité…) : jamais imprimées

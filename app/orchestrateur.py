@@ -3,7 +3,7 @@
 Usage :  python -m app.orchestrateur [--sans-gmail] [--etapes collecte,validite,fiches,veille,matching]
 
 Ordre : Recherche (alertes Gmail des 2 derniers jours) -> Suivi (réponses, accusés de réception :
-valide les candidatures envoyées) -> Validité (doublons, fraîcheur)
+valide les candidatures envoyées) -> Relances (envoi automatique des relances dues) -> Validité (doublons, fraîcheur)
 -> Fiches (site carrières des nouveaux employeurs) -> Veille (entreprises surveillées)
 -> Matching (qualification des offres à fiche complète) -> Candidatures auto (CV + LM + mail ; envoi sous le seuil, mise de côté au-dessus)
 -> Spontanées (5 brouillons par jour au plus)
@@ -19,7 +19,7 @@ from datetime import UTC, datetime
 from psycopg.types.json import Jsonb
 
 from app import activite, pertinence, rapport
-from app.agents import candidature_auto, matching, suivi, veille
+from app.agents import candidature_auto, matching, relances, suivi, veille
 from app.collecte.importer import importer_boite
 from app.config import boites_gmail, chemin_token
 from app.db import connexion
@@ -34,6 +34,7 @@ VERROU = 8_765_001
 ETAPES = (
     "collecte",
     "suivi",
+    "relances",
     "validite",
     "fiches",
     "veille",
@@ -67,6 +68,11 @@ def _candidatures_auto() -> dict:
         return candidature_auto.executer(conn)
 
 
+def _relances() -> dict:
+    with connexion() as conn:
+        return relances.executer(conn)
+
+
 def _spontanees() -> dict:
     with connexion() as conn:
         return agent_spontanees.executer(conn)
@@ -97,6 +103,7 @@ def _matching() -> dict:
 AGENTS = {
     "collecte": _collecte,
     "suivi": suivi.executer,
+    "relances": _relances,
     "validite": _validite,
     "fiches": lambda: chercher_fiches(limite=40),
     "veille": _veille,
@@ -106,6 +113,7 @@ AGENTS = {
     "rapport": _rapport,
 }
 JOURNALISES_ICI = {
+    "relances",
     "validite",
     "veille",
     "matching",

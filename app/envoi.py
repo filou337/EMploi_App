@@ -131,7 +131,8 @@ def etat(conn: psycopg.Connection) -> dict:
     e, s = p["envoi"], p["seuils"]
     jour = conn.execute(
         "SELECT count(*) FILTER (WHERE NOT automatique) AS manuels,"
-        " count(*) FILTER (WHERE automatique) AS auto FROM envois"
+        " count(*) FILTER (WHERE automatique AND type <> 'relance') AS auto,"
+        " count(*) FILTER (WHERE automatique AND type = 'relance') AS relances_auto FROM envois"
         " WHERE cree_le::date = current_date AND statut = 'envoye'"
     ).fetchone()
     return {
@@ -143,6 +144,9 @@ def etat(conn: psycopg.Connection) -> dict:
         "auto": bool(e.get("auto")),
         "auto_aujourdhui": jour["auto"],
         "plafond_auto": int(s.get("envois_auto_par_jour", 10)),
+        "relances_auto": bool(e.get("relances_auto", True)),
+        "relances_auto_aujourdhui": jour["relances_auto"],
+        "plafond_relances_auto": int(s.get("relances_auto_par_jour", 15)),
     }
 
 
@@ -184,13 +188,23 @@ def _pieces_jointes(conn: psycopg.Connection) -> list[dict]:
     ).fetchall()
 
 
-def _controles(conn: psycopg.Connection, destinataire: str | None, auto: bool = False) -> dict:
+def _controles(
+    conn: psycopg.Connection, destinataire: str | None, auto: bool = False, type_: str = ""
+) -> dict:
     e = etat(conn)
     if not e["autorise"]:
         raise EnvoiImpossible(
             "Envoi non autorisé : lance `python -m app.envoi --autoriser` sur le PC."
         )
-    if auto:
+    if auto and type_ == "relance":
+        # Relances automatiques : plafond à part, elles ne prennent pas la place des candidatures.
+        if not e["relances_auto"]:
+            raise EnvoiImpossible("Les relances automatiques sont désactivées.")
+        if e["relances_auto_aujourdhui"] >= e["plafond_relances_auto"]:
+            raise EnvoiImpossible(
+                f"Plafond de {e['plafond_relances_auto']} relances automatiques par jour atteint."
+            )
+    elif auto:
         if not e["auto"]:
             raise EnvoiImpossible("Les candidatures automatiques sont désactivées.")
         if e["auto_aujourdhui"] >= e["plafond_auto"]:
@@ -223,7 +237,7 @@ def _envoyer(
 ) -> dict:
     from app.generation import identite
 
-    e = _controles(conn, destinataire, auto)
+    e = _controles(conn, destinataire, auto, type_)
     if not objet.strip() or not corps.strip():
         raise EnvoiImpossible("Objet ou message vide.")
     try:
@@ -289,7 +303,9 @@ def envoyer_spontanee(conn: psycopg.Connection, sid: int, objet: str, corps: str
     return {**r, "candidature_id": cid}
 
 
-def envoyer_relance(conn: psycopg.Connection, cid: int, objet: str, corps: str) -> dict:
+def envoyer_relance(
+    conn: psycopg.Connection, cid: int, objet: str, corps: str, auto: bool = False
+) -> dict:
     rel = conn.execute(
         "SELECT r.numero, r.contact_email, c.boite, c.gmail_thread_id FROM v_relances r"
         " JOIN candidatures c ON c.id = r.id WHERE r.id = %s",
@@ -306,9 +322,27 @@ def envoyer_relance(conn: psycopg.Connection, cid: int, objet: str, corps: str) 
     if opposee:
         raise EnvoiImpossible("Ce contact a demandé à ne plus être sollicité.")
     fil = rel["gmail_thread_id"] if rel["boite"] == boite_envoi() else None
-    r = _envoyer(conn, "relance", cid, rel["numero"], rel["contact_email"], objet, corps, [], fil)
+    r = _envoyer(
+        conn, "relance", cid, rel["numero"], rel["contact_email"], objet, corps, [], fil, auto
+    )
     conn.execute("SELECT marquer_relance(%s)", (cid,))
     return {**r, "numero": rel["numero"]}
+
+
+def prevenir_moi(conn: psycopg.Connection, titre: str, message: str) -> bool:
+    """Mail à ta propre adresse (celle qui envoie) : ton téléphone sonne même PC éteint.
+    Ni plafond ni trace dans `envois` : ce n'est pas un mail à un recruteur."""
+    e = etat(conn)
+    if not e["autorise"] or not e["adresse"]:
+        return False
+    msg = construire(e["adresse"], "EMploi_App", e["adresse"], titre, message, [])
+    try:
+        _service().users().messages().send(
+            userId="me", body={"raw": base64.urlsafe_b64encode(msg.as_bytes()).decode()}
+        ).execute()
+    except Exception:  # noqa: BLE001 — l'alerte est un plus : la notification de l'appli reste
+        return False
+    return True
 
 
 def cv_origine_pdf(conn: psycopg.Connection) -> dict | None:

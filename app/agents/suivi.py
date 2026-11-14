@@ -12,6 +12,7 @@
 
 import psycopg
 
+from app import envoi
 from app.config import boites_gmail, chemin_token
 from app.db import connexion
 from app.notifications import notifier
@@ -72,7 +73,8 @@ def executer() -> dict:
         confirmees = rapprocher(conn)
         nouvelles = conn.execute(
             """
-            SELECT r.classement, e.nom_affiche AS entreprise, c.poste, c.offre_id FROM reponses r
+            SELECT r.classement, r.extrait, r.expediteur, e.nom_affiche AS entreprise, c.poste,
+                   c.offre_id FROM reponses r
             JOIN candidatures c ON c.id = r.candidature_id LEFT JOIN entreprises e ON e.id = c.entreprise_id
             WHERE r.id > %s AND r.classement IN ('positive', 'negative')
             """,
@@ -87,6 +89,17 @@ def executer() -> dict:
                 r["poste"] or "",
                 r["offre_id"],
             )
+            if positive:
+                # Ton téléphone sonne même PC éteint : mail à ta propre adresse.
+                envoi.prevenir_moi(
+                    conn,
+                    f"🎉 Réponse positive — {r['entreprise'] or 'une entreprise'}",
+                    f"Bonne nouvelle : réponse positive pour ta candidature"
+                    f"{' au poste de ' + r['poste'] if r['poste'] else ''}"
+                    f" chez {r['entreprise'] or '?'}.\n\n"
+                    f"De : {r['expediteur'] or '?'}\nObjet : {r['extrait'] or '?'}\n\n"
+                    "Réponds-lui vite depuis ta boîte mail. Détail dans l'appli, onglet Réponses.",
+                )
         sans_suite = conn.execute("SELECT classer_sans_suite() AS n").fetchone()["n"]
         relances = conn.execute("SELECT count(*) AS n FROM v_relances").fetchone()["n"]
         deja = conn.execute(

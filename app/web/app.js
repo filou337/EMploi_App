@@ -22,8 +22,14 @@ const AGENTS = {
   suivi: { nom: "Agent Suivi", role: "relit les envois, accusés et réponses", c: "#2d7a4f", mission: [
     "Relit tes mails des 3 derniers jours : candidatures envoyées, accusés de réception, refus, invitations.",
     "Un accusé de réception confirme l'envoi : l'offre passe « Envoyée ».",
-    "Te notifie chaque réponse et prépare les relances (J+7 puis J+14), que tu envoies.",
+    "Te notifie chaque réponse ; réponse positive : notification + mail à ta propre adresse (ton téléphone sonne).",
+    "Réponse qui renvoie vers le site officiel ou demande de ne plus être recontacté : relance bloquée.",
     "Classe « sans suite » une candidature restée sans réponse 30 jours après la dernière relance."] },
+  relances: { nom: "Agent Relances", role: "envoie tout seul les relances dues (J+7, J+14)", c: "#b0562c", mission: [
+    "Relance les candidatures envoyées depuis le 1er du mois dernier : J+7, puis J+14.",
+    "Jamais si l'entreprise a répondu, renvoie vers son site officiel ou ne veut plus être recontactée, ni si tu as cliqué « Ne pas relancer ».",
+    "Seulement vers une vraie adresse (personne ou RH), jamais un robot d'ATS ; 15 par jour au plus.",
+    "Envoyée dans le fil Gmail de la candidature quand c'est possible."] },
   validite: { nom: "Agent Validité", role: "repère les doublons et les offres trop anciennes", c: "#173448", mission: [
     "Écarte les doublons (même offre vue dans plusieurs alertes).",
     "Marque les offres trop anciennes."] },
@@ -464,7 +470,7 @@ function texteRelance(r, ident, langue) {
         + `If the position is still open, I would be glad to have a short call.\n\nBest regards,\n${nom}${tel}`;
     return { objet, corps };
   }
-  const objet = `Relance – candidature${poste ? ` au poste de ${poste}` : " spontanée"}`;
+  const objet = `Relance – candidature${poste ? ` au poste de ${poste}` : r.type === "spontanee" ? " spontanée" : ""}`;
   const corps = r.numero === 1
     ? `Bonjour,\n\nJe me permets de revenir vers vous au sujet de ma candidature${poste ? ` au poste de ${poste}` : ""}`
       + `${quand ? `, envoyée le ${quand}` : ""}. Je reste très motivé à l'idée de rejoindre ${r.entreprise || "votre équipe"} `
@@ -482,7 +488,8 @@ async function afficherRelances() {
   const textes = {};
   if (!rows.length) { zone.innerHTML = ""; return; }
   zone.innerHTML = `<div class="carte section"><h3>Relances à faire (${rows.length})</h3>
-    <p class="note">J+7 après la candidature, puis J+14. Relis le texte, envoie-le depuis ta messagerie, puis clique « J'ai relancé ».</p>
+    <p class="note">J+7 après la candidature, puis J+14. Celles qui ont une adresse de recruteur partent <strong>automatiquement</strong>
+      au prochain passage (candidatures du mois en cours et du mois dernier) ; les autres : envoie le texte depuis ta messagerie, puis « J'ai relancé ».</p>
     <ul class="liste">${rows.map((r) => {
       const langue = ANGLAIS.test(r.poste || r.offre_intitule || "") && !/[éèà]/.test(r.poste || "") ? "en" : "fr";
       const t = texteRelance(r, ident, langue);

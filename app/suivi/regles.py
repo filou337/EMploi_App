@@ -155,6 +155,43 @@ def classer(sujet: str, texte: str, envoye_par_moi: bool) -> tuple[str, float]:
     return AUTRE, 0.5
 
 
+# --- Relance interdite ---------------------------------------------------------------------
+# Réponse qui renvoie vers le site officiel (postuler ou suivre sa candidature en ligne) ou qui
+# demande de ne plus être recontacté : aucune relance automatique pour cette candidature.
+_VERS_LE_SITE = _motifs(
+    r"(?:postuler|candidater|déposer votre candidature|deposer votre candidature)"
+    r"[^.]{0,40}(?:sur|via|depuis|par) (?:notre|le) (?:site|plateforme|portail|espace|page)",
+    r"(?:suivre|consulter|retrouver)[^.]{0,40}(?:candidature|dossier)[^.]{0,40}"
+    r"(?:sur|via|depuis|dans) (?:notre|votre|le|l')\s?(?:site|plateforme|portail|espace)",
+    r"espace candidats?\b",
+    r"apply[^.]{0,30}(?:on|through|via) our (?:website|careers? (?:site|page)|portal|platform)",
+    r"(?:track|check|follow)[^.]{0,30}(?:application|status)[^.]{0,30}"
+    r"(?:on|through|via|in) (?:our|the|your) (?:website|portal|platform|candidate)",
+    r"candidate (?:portal|home|profile)",
+)
+_PLUS_DE_CONTACT = _motifs(
+    r"ne (?:plus|pas) (?:nous |me )?(?:recontacter|relancer|solliciter)",
+    r"merci de ne (?:plus|pas) (?:nous |me )?(?:contacter|écrire|ecrire|relancer)",
+    r"ne souhait(?:e|ons|ent) (?:pas|plus) (?:être|etre) (?:re)?(?:contacté|sollicité|relancé)",
+    r"(?:inutile|pas la peine) de (?:nous |me )?(?:relancer|recontacter)",
+    r"aucune relance",
+    r"please do not (?:contact|follow[ -]?up|reach out)",
+    r"(?:no|without) (?:further )?follow[ -]?ups?",
+    r"do not wish to be contacted",
+    r"(?:désinscri|desinscri|unsubscribe)[^.]{0,30}(?:candidature|recrutement|recruitment)",
+)
+
+
+def relance_interdite(texte: str) -> str | None:
+    """Motif pour lequel il ne faut pas relancer après ce mail, ou None."""
+    t = re.sub(r"\s+", " ", texte or "")
+    if _PLUS_DE_CONTACT.search(t):
+        return "l'entreprise ne souhaite pas être recontactée"
+    if _VERS_LE_SITE.search(t):
+        return "l'entreprise renvoie vers son site officiel"
+    return None
+
+
 def parle_de_candidature(sujet: str) -> bool:
     """L'objet du mail parle d'une candidature (le corps ne suffit pas : newsletters)."""
     return bool(_SUJET_CANDIDATURE.search(sujet))

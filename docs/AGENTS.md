@@ -8,7 +8,8 @@ ce qu'il fait dans le **Salon** de l'appli (fil en direct et journal des passage
 | # | Agent | Code | Envoie quelque chose ? |
 |---|-------|------|------------------------|
 | 1 | Recherche | `app/collecte/importer.py` | Non (Gmail en lecture seule) |
-| 2 | Suivi | `app/agents/suivi.py` | Non (relances préparées, envoyées par toi) |
+| 2 | Suivi | `app/agents/suivi.py` | Seulement une alerte à ta propre adresse (réponse positive) |
+| 2 bis | **Relances** | `app/agents/relances.py` | **Oui : relances aux recruteurs** |
 | 3 | Validité | `app/validite.py` | Non |
 | 4 | Fiches | `app/fiches/recherche.py` | Non |
 | 5 | Veille | `app/agents/veille.py` | Non |
@@ -24,8 +25,19 @@ entreprise, lien) et l'ajoute à la base sans doublon (même URL = doublon).
 ## 2. Suivi
 Relit les mails des 3 derniers jours : candidatures envoyées, accusés de réception, refus,
 invitations. Un accusé de réception confirme un envoi (l'offre passe « Envoyée »). Notifie
-chaque réponse, prépare les relances à J+7 puis J+14 (onglet Candidatures) et classe « sans
+chaque réponse ; une **réponse positive** déclenche aussi un mail à ta propre adresse, pour que
+ton téléphone sonne même PC éteint. Une réponse qui **renvoie vers le site officiel** (postuler
+ou suivre sa candidature en ligne) ou qui **demande de ne plus être recontacté** bloque la
+relance de cette candidature (`relance_ignoree`, motif dans `relance_motif`). Classe « sans
 suite » une candidature sans réponse 30 jours après la dernière relance.
+
+## 2 bis. Relances (envoi automatique)
+Juste après le Suivi, envoie sans ton clic les relances dues (J+7, puis J+14) des candidatures
+envoyées **depuis le 1er du mois dernier** : jamais si l'entreprise a répondu (positif ou refus),
+si la relance est bloquée (site officiel, pas de contact, « Ne pas relancer ») ou si le contact
+est en opposition ; seulement vers une vraie adresse (personne ou RH, jamais un robot d'ATS),
+dans le fil Gmail de la candidature quand c'est possible. Au plus `relances_auto_par_jour` (15)
+par jour, à part du plafond des candidatures. Interrupteur : `parametres.envoi.relances_auto`.
 
 ## 3. Validité
 Écarte les doublons et marque les offres trop anciennes.

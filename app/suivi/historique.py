@@ -39,6 +39,7 @@ from app.suivi.regles import (
     REFUS,
     lire,
     parle_de_candidature,
+    relance_interdite,
     texte_utile,
 )
 
@@ -186,6 +187,35 @@ class Import:
 
     # --- traitement d'un mail ---------------------------------------------------------------
     def traiter(self, m: dict, lu, texte: str) -> None:
+        self._traiter(m, lu, texte)
+        if m.get("envoi") or lu.type in (AUTO, HORS_EMPLOI, ENVOI, NON_REMIS):
+            return
+        motif = relance_interdite(texte)
+        if motif is None:
+            return
+        cible = (
+            self._par_fil(m["thread"])
+            or self.conn.execute(
+                "SELECT id FROM candidatures WHERE boite = %s AND gmail_message_id = %s",
+                (self.boite, m["id"]),
+            ).fetchone()
+        )
+        if (
+            cible is None
+            and lu.entreprise
+            and (lu.type != AUTRE or parle_de_candidature(m["Subject"]))
+        ):
+            eid = entreprise_id(self.conn, lu.entreprise)
+            cible = eid and self._par_entreprise(eid, m["date"], RATTACHEMENT_MAX)
+        if cible:
+            n = self.conn.execute(
+                "UPDATE candidatures SET relance_ignoree = TRUE, relance_motif = %s, maj_le = now()"
+                " WHERE id = %s AND NOT relance_ignoree",
+                (motif, cible["id"]),
+            ).rowcount
+            self.stats["relances bloquées (site officiel / pas de contact)"] += n
+
+    def _traiter(self, m: dict, lu, texte: str) -> None:
         if lu.type == AUTO:
             self.stats["réponses automatiques ignorées"] += 1
             return
