@@ -1324,6 +1324,16 @@ async function majBadge() {
   } catch {}
 }
 
+// Que faire quand une page ne charge pas : dépend du mode (en ligne ou servi par le PC).
+function aideErreur() {
+  if (!navigator.onLine) return '<p class="note">Pas de réseau : reconnecte-toi au wifi ou aux données mobiles.</p>';
+  if (Donnees.EN_LIGNE) return '<p class="note">Le serveur en ligne ne répond pas (réseau lent ou bloqué ?). Réessaie dans un instant.</p>';
+  const enLigne = lienSur((window.EMPLOI_CONFIG || {}).urlPublique);
+  return `<p class="note">Cette adresse est celle de ton PC : elle ne marche que s'il est allumé (python -m app).</p>
+    ${enLigne ? `<p><a class="bouton principal" href="${enLigne}">Ouvrir l'appli en ligne (marche PC éteint)</a></p>
+    <p class="note">Sur ton téléphone, ajoute <strong>cette</strong> adresse à l'écran d'accueil à la place de l'ancienne.</p>` : ""}`;
+}
+
 async function router() {
   const nom = location.hash.slice(1).split("?")[0] || "tableau";
   if (nom !== "salon") clearInterval(minuterieSalon);
@@ -1332,8 +1342,7 @@ async function router() {
   const v = $("#vue");
   v.onclick = null; v.innerHTML = '<p class="chargement">Chargement…</p>';
   try { await vue(v); }
-  catch (err) { v.innerHTML = `<div class="carte"><h2>Impossible de charger cette page</h2><p class="erreur">${esc(err.message)}</p>
-    <p class="note">${navigator.onLine ? "Le PC est-il allumé et l'appli lancée ? (python -m app)" : "Pas de réseau : l'appli a besoin de joindre ton PC."}</p></div>`; }
+  catch (err) { v.innerHTML = `<div class="carte"><h2>Impossible de charger cette page</h2><p class="erreur">${esc(err.message)}</p>${aideErreur()}</div>`; }
 }
 
 document.addEventListener("click", async (e) => {

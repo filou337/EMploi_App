@@ -1128,4 +1128,23 @@ def journal(conn: Conn = Depends(db)):
     ).fetchall()
 
 
+@app.get("/config.js", include_in_schema=False)
+def config_locale():
+    """Mode local (API du PC) + adresse de l'appli en ligne, proposée quand le PC ne répond pas."""
+    import json
+    import os
+
+    from fastapi.responses import Response
+
+    url = os.getenv("PAGES_URL") or ""
+    corps = (
+        "// Mode local : servi par le PC. Valeurs vides = API Python du PC.\n"
+        'window.EMPLOI_CONFIG = { supabaseUrl: "", supabaseAnonKey: "", '
+        f"urlPublique: {json.dumps(url)} }};\n"
+    )
+    return Response(
+        corps, media_type="application/javascript", headers={"Cache-Control": "no-cache"}
+    )
+
+
 app.mount("/", StaticFiles(directory=WEB, html=True), name="web")
