@@ -214,3 +214,5 @@ code { background: var(--paper); padding: 1px 5px; border-radius: 4px; }
 
 .texte-relance { white-space: pre-wrap; background: var(--paper); color: var(--ink); border: 1px solid var(--line);
   font-family: var(--sans); font-size: 13px; }
+.cloche.btn-compte { color: var(--white); text-decoration: none; display: inline-flex; align-items: center; }
+.cloche.btn-compte + .cloche { margin-left: 0; }

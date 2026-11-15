@@ -1264,6 +1264,40 @@ $("#cloche").addEventListener("click", async () => {
   if (perm) perm.onclick = async () => { await Notification.requestPermission(); fermer(); };
 });
 
+// --- Mon compte : qui est connecté, déconnexion, mot de passe -------------------------------------
+async function vueCompte(v) {
+  if (!Donnees.EN_LIGNE) {
+    v.innerHTML = `<div class="entete"><div><h1>Mon compte.</h1>
+      <p>Tu utilises l'appli servie par ton PC : il n'y a pas de compte ici.</p></div></div>
+      ${lienSur((window.EMPLOI_CONFIG || {}).urlPublique) ? `<div class="carte"><p>L'appli en ligne (avec ton compte, PC éteint compris) :</p>
+        <p><a class="bouton principal" href="${lienSur(window.EMPLOI_CONFIG.urlPublique)}">Ouvrir l'appli en ligne</a></p></div>` : ""}`;
+    return;
+  }
+  const s = await Donnees.session();
+  const email = s?.user?.email || "?";
+  v.innerHTML = `<div class="entete"><div><h1>Mon compte.</h1>
+      <p>Connecté en tant que <strong>${esc(email)}</strong>${s?.user?.last_sign_in_at ? ` · dernière connexion le ${jour(s.user.last_sign_in_at)}` : ""}.</p></div></div>
+    <div class="grille-2">
+      <div class="carte"><h3>Changer de compte</h3>
+        <p class="note">Te déconnecte de cet appareil ; tu pourras te reconnecter avec un autre compte.</p>
+        <p><button class="bouton principal" id="b-deco">Se déconnecter</button></p></div>
+      <div class="carte"><h3>Changer de mot de passe</h3>
+        <form class="formulaire" id="form-mdp">
+          <label>Nouveau mot de passe<input class="champ" type="password" name="mdp" autocomplete="new-password" minlength="8" required></label>
+          <label>Confirme-le<input class="champ" type="password" name="mdp2" autocomplete="new-password" minlength="8" required></label>
+          <p class="erreur" id="err-mdp"></p>
+          <button class="bouton">Enregistrer le nouveau mot de passe</button></form></div></div>`;
+  $("#b-deco").onclick = async () => { await Donnees.seDeconnecter(); location.hash = ""; location.reload(); };
+  $("#form-mdp").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const f = new FormData(e.target), err = $("#err-mdp");
+    if (f.get("mdp") !== f.get("mdp2")) { err.textContent = "Les deux mots de passe ne sont pas identiques."; return; }
+    err.textContent = "";
+    try { await Donnees.changerMotDePasse(f.get("mdp")); e.target.reset(); toast("Mot de passe changé."); }
+    catch (x) { err.textContent = x.message || "Impossible de changer le mot de passe."; }
+  });
+}
+
 // --- Sur mon téléphone (Tailscale + installation) ------------------------------------------------
 async function vueTelephone(v) {
   if (Donnees.EN_LIGNE) {
@@ -1314,7 +1348,8 @@ sudo tailscale set --operator=$USER</pre></li>
 
 // --- Navigation ---------------------------------------------------------------------------------
 const VUES = { telephone: vueTelephone, tableau: vueTableau, pipeline: vuePipeline, veille: vueVeille, offres: vueOffres, candidatures: vueCandidatures, reponses: vueReponses,
-  documents: vueDocuments, salon: vueSalon, rapport: vueRapport, spontanees: vueSpontanees, auto: vueEnvoisAuto, guide: vueGuide };
+  documents: vueDocuments, salon: vueSalon, rapport: vueRapport, spontanees: vueSpontanees, auto: vueEnvoisAuto, guide: vueGuide,
+  compte: vueCompte };
 
 async function majBadge() {
   try {

@@ -305,5 +305,9 @@ async function seConnecter(email, motDePasse) {
   verifier(await sb.auth.signInWithPassword({ email, password: motDePasse }));
 }
 async function seDeconnecter() { if (EN_LIGNE) await sb.auth.signOut(); }
+async function changerMotDePasse(motDePasse) {
+  if (!EN_LIGNE) throw new ErreurDonnees("En mode local (PC), il n'y a pas de compte.");
+  verifier(await sb.auth.updateUser({ password: motDePasse }));
+}
 
-window.Donnees = { EN_LIGNE, apiSupabase, apiLocal, telecharger, session, seConnecter, seDeconnecter };
+window.Donnees = { EN_LIGNE, apiSupabase, apiLocal, telecharger, session, seConnecter, seDeconnecter, changerMotDePasse };
