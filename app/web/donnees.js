@@ -91,14 +91,18 @@ const ROUTES = [
     const p = Object.fromEntries(verifier(await sb.from("parametres").select("cle, valeur").in("cle", ["envoi", "seuils"])).map((r) => [r.cle, r.valeur]));
     const e = p.envoi || {}, debut = new Date(); debut.setHours(0, 0, 0, 0);
     const { count } = await sb.from("envois").select("id", { count: "exact", head: true }).eq("statut", "envoye").gte("cree_le", debut.toISOString());
-    const { count: auto } = await sb.from("envois").select("id", { count: "exact", head: true }).eq("statut", "envoye").eq("automatique", true).gte("cree_le", debut.toISOString());
+    const { count: auto } = await sb.from("envois").select("id", { count: "exact", head: true }).eq("statut", "envoye").eq("automatique", true).not("type", "in", "(relance,spontanee)").gte("cree_le", debut.toISOString());
+    const { count: spont } = await sb.from("envois").select("id", { count: "exact", head: true }).eq("statut", "envoye").eq("automatique", true).eq("type", "spontanee").gte("cree_le", debut.toISOString());
+    const { count: rel } = await sb.from("envois").select("id", { count: "exact", head: true }).eq("statut", "envoye").eq("automatique", true).eq("type", "relance").gte("cree_le", debut.toISOString());
     return { autorise: Boolean(e.autorise_pour), adresse: e.autorise_pour || null, actif: Boolean(e.actif),
-      envoyes_aujourdhui: (count || 0) - (auto || 0), plafond: (p.seuils || {}).envois_par_jour ?? 10,
-      auto: Boolean(e.auto), auto_aujourdhui: auto || 0, plafond_auto: (p.seuils || {}).envois_auto_par_jour ?? 10 };
+      envoyes_aujourdhui: (count || 0) - (auto || 0) - (spont || 0) - (rel || 0), plafond: (p.seuils || {}).envois_par_jour ?? 10,
+      auto: Boolean(e.auto), auto_aujourdhui: auto || 0, plafond_auto: (p.seuils || {}).envois_auto_par_jour ?? 10,
+      spontanees_auto: Boolean(e.spontanees_auto), spontanees_auto_aujourdhui: spont || 0,
+      plafond_spontanees_auto: (p.seuils || {}).spontanees_auto_par_jour ?? 5 };
   }],
   ["PUT", /^envoi$/, async (_m, _q, o) => {
     const actuel = verifier(await sb.from("parametres").select("valeur").eq("cle", "envoi").maybeSingle())?.valeur || {};
-    const b = corps(o), actif = Boolean(b.actif), cle = b.cle === "auto" ? "auto" : "actif";
+    const b = corps(o), actif = Boolean(b.actif), cle = ["auto", "spontanees_auto"].includes(b.cle) ? b.cle : "actif";
     if (actif && !actuel.autorise_pour) throw new ErreurDonnees("Autorise d'abord l'envoi sur le PC : python -m app.envoi --autoriser");
     verifier(await sb.from("parametres").upsert({ cle: "envoi", valeur: { ...actuel, [cle]: actif } }));
     return apiSupabase("envoi");

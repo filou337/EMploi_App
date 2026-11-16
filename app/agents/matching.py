@@ -23,7 +23,9 @@ def reperer(conn: psycopg.Connection, crit: dict) -> int:
         " AND statut_validite IN ('a_verifier', 'valide')"
     ).fetchall()
     ids = [
-        r["id"] for r in rows if criteres.refus(r["intitule"] or "", r["ville"] or "", crit) is None
+        r["id"]
+        for r in rows
+        if criteres.refus(r["intitule"] or "", r["ville"] or "", crit, conn) is None
     ]
     if ids:
         conn.execute(
@@ -35,6 +37,7 @@ def reperer(conn: psycopg.Connection, crit: dict) -> int:
 def executer(conn: psycopg.Connection) -> dict:
     params = criteres.lire(conn)
     seuils = params["seuils"]
+    criteres.situer_offres(conn, params["criteres"])
     bilan = {"repérées": reperer(conn, params["criteres"]), "analysées": 0, "qualifiées": 0}
     if not llm.disponible():
         bilan["note"] = "clé Gemini absente"

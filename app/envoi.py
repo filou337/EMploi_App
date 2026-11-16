@@ -6,6 +6,8 @@ Garde-fous :
 - interrupteur `parametres.envoi.actif`, désactivé par défaut (onglet « Spontanées ») ;
 - un envoi = un clic sur un brouillon précis ; jamais deux fois le même (index unique) ;
 - plafond quotidien (`seuils.envois_par_jour`, 10) ; contact en opposition refusé ;
+- spontanées automatiques : interrupteur à part `envoi.spontanees_auto` (coupé par défaut) et
+  plafond `seuils.spontanees_auto_par_jour` (5) ;
 - chaque envoi est journalisé dans `envois` (destinataire, objet, identifiant Gmail).
 
 Autoriser une fois (sur le PC) :  python -m app.envoi --autoriser
@@ -13,6 +15,7 @@ Autoriser une fois (sur le PC) :  python -m app.envoi --autoriser
 
 import argparse
 import base64
+import html
 import json
 import os
 import re
@@ -131,8 +134,9 @@ def etat(conn: psycopg.Connection) -> dict:
     e, s = p["envoi"], p["seuils"]
     jour = conn.execute(
         "SELECT count(*) FILTER (WHERE NOT automatique) AS manuels,"
-        " count(*) FILTER (WHERE automatique AND type <> 'relance') AS auto,"
-        " count(*) FILTER (WHERE automatique AND type = 'relance') AS relances_auto FROM envois"
+        " count(*) FILTER (WHERE automatique AND type NOT IN ('relance', 'spontanee')) AS auto,"
+        " count(*) FILTER (WHERE automatique AND type = 'relance') AS relances_auto,"
+        " count(*) FILTER (WHERE automatique AND type = 'spontanee') AS spontanees_auto FROM envois"
         " WHERE cree_le::date = current_date AND statut = 'envoye'"
     ).fetchone()
     return {
@@ -147,12 +151,16 @@ def etat(conn: psycopg.Connection) -> dict:
         "relances_auto": bool(e.get("relances_auto", True)),
         "relances_auto_aujourdhui": jour["relances_auto"],
         "plafond_relances_auto": int(s.get("relances_auto_par_jour", 15)),
+        "spontanees_auto": bool(e.get("spontanees_auto")),
+        "spontanees_auto_aujourdhui": jour["spontanees_auto"],
+        "plafond_spontanees_auto": int(s.get("spontanees_auto_par_jour", 5)),
     }
 
 
 def activer(conn: psycopg.Connection, actif: bool, cle: str = "actif") -> dict:
-    """`cle` = « actif » (envoi en 1 clic) ou « auto » (candidatures automatiques)."""
-    if cle not in ("actif", "auto"):
+    """`cle` = « actif » (envoi en 1 clic), « auto » (candidatures automatiques) ou
+    « spontanees_auto » (candidatures spontanées automatiques)."""
+    if cle not in ("actif", "auto", "spontanees_auto"):
         raise EnvoiImpossible("Réglage inconnu.")
     params = criteres.lire(conn)["envoi"]
     if actif and not params.get("autorise_pour"):
@@ -172,11 +180,31 @@ def construire(
     m["To"] = destinataire
     m["Subject"] = objet
     m.set_content(corps)
+    m.add_alternative(en_html(corps), subtype="html")  # liens cliquables (portfolio, LinkedIn)
     for p in pieces:
         m.add_attachment(
             bytes(p["contenu"]), maintype="application", subtype="pdf", filename=p["nom_fichier"]
         )
     return m
+
+
+_LIEN = re.compile(r"(https?://[^\s<>\"]+[^\s<>\".,;:!?)])")
+
+
+def en_html(texte: str) -> str:
+    """Version HTML du mail : paragraphes et liens cliquables, rien d'autre."""
+    paragraphes = [p for p in re.split(r"\n\s*\n", texte or "") if p.strip()]
+    rendus = []
+    for p in paragraphes:
+        morceaux = _LIEN.split(p)
+        h = "".join(
+            f'<a href="{html.escape(x, quote=True)}">{html.escape(x)}</a>'
+            if i % 2
+            else html.escape(x)
+            for i, x in enumerate(morceaux)
+        )
+        rendus.append(f"<p>{h.replace(chr(10), '<br>')}</p>")
+    return f'<div style="font-family:Arial,sans-serif;font-size:14px">{"".join(rendus)}</div>'
 
 
 def _pieces_jointes(conn: psycopg.Connection) -> list[dict]:
@@ -196,7 +224,14 @@ def _controles(
         raise EnvoiImpossible(
             "Envoi non autorisé : lance `python -m app.envoi --autoriser` sur le PC."
         )
-    if auto and type_ == "relance":
+    if auto and type_ == "spontanee":
+        if not e["spontanees_auto"]:
+            raise EnvoiImpossible("Les candidatures spontanées automatiques sont désactivées.")
+        if e["spontanees_auto_aujourdhui"] >= e["plafond_spontanees_auto"]:
+            raise EnvoiImpossible(
+                f"Plafond de {e['plafond_spontanees_auto']} spontanées automatiques par jour atteint."
+            )
+    elif auto and type_ == "relance":
         # Relances automatiques : plafond à part, elles ne prennent pas la place des candidatures.
         if not e["relances_auto"]:
             raise EnvoiImpossible("Les relances automatiques sont désactivées.")
@@ -273,7 +308,9 @@ def _envoyer(
     return {"envoi_id": envoi_id, "gmail_message_id": r.get("id"), "thread_id": r.get("threadId")}
 
 
-def envoyer_spontanee(conn: psycopg.Connection, sid: int, objet: str, corps: str) -> dict:
+def envoyer_spontanee(
+    conn: psycopg.Connection, sid: int, objet: str, corps: str, auto: bool = False
+) -> dict:
     s = conn.execute(
         "SELECT s.statut, s.destinataire, c.opposition FROM spontanees s"
         " LEFT JOIN contacts c ON c.id = s.contact_id WHERE s.id = %s",
@@ -292,7 +329,7 @@ def envoyer_spontanee(conn: psycopg.Connection, sid: int, objet: str, corps: str
         )
     conn.execute("UPDATE spontanees SET objet = %s, corps = %s WHERE id = %s", (objet, corps, sid))
     conn.commit()
-    r = _envoyer(conn, "spontanee", sid, 1, s["destinataire"], objet, corps, pieces)
+    r = _envoyer(conn, "spontanee", sid, 1, s["destinataire"], objet, corps, pieces, auto=auto)
     cid = conn.execute("SELECT spontanee_envoyee(%s) AS c", (sid,)).fetchone()["c"]
     # Le fil Gmail rattache les réponses à cette candidature (agent Suivi).
     conn.execute(

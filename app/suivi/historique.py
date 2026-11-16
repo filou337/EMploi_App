@@ -28,6 +28,7 @@ from app.collecte.sources import filtres_alertes
 from app.config import boites_gmail, chemin_token
 from app.db import connexion
 from app.entreprises import domaine_racine, entreprise_id, est_generique_ou_ats
+from app.spontanees import suite as suite_spontanee
 from app.suivi.regles import (
     ACCUSE,
     AUTO,
@@ -116,7 +117,8 @@ class Import:
     # --- recherche de la candidature concernée ---------------------------------------------
     def _par_fil(self, thread: str) -> dict | None:
         return self.conn.execute(
-            "SELECT id, statut FROM candidatures WHERE boite = %s AND gmail_thread_id = %s"
+            "SELECT id, statut, type, entreprise_id, contact_email FROM candidatures"
+            " WHERE boite = %s AND gmail_thread_id = %s"
             " ORDER BY id LIMIT 1",
             (self.boite, thread),
         ).fetchone()
@@ -190,6 +192,7 @@ class Import:
         self._traiter(m, lu, texte)
         if m.get("envoi") or lu.type in (AUTO, HORS_EMPLOI, ENVOI, NON_REMIS):
             return
+        self._suite_spontanee(m, lu, texte)
         motif = relance_interdite(texte)
         if motif is None:
             return
@@ -214,6 +217,24 @@ class Import:
                 (motif, cible["id"]),
             ).rowcount
             self.stats["relances bloquées (site officiel / pas de contact)"] += n
+
+    def _suite_spontanee(self, m: dict, lu, texte: str) -> None:
+        """Réponse dans le fil d'une spontanée : redirection ou « pas pour l'instant »."""
+        if lu.type == POSITIF:
+            return
+        cand = self._par_fil(m["thread"])
+        if cand is None or cand["type"] != "spontanee":
+            return
+        fait = suite_spontanee.traiter(
+            self.conn,
+            cand,
+            m["From"],
+            parseaddr(m["To"] or "")[1].lower(),
+            m["date"].date(),
+            texte,
+        )
+        if fait:
+            self.stats[fait] += 1
 
     def _traiter(self, m: dict, lu, texte: str) -> None:
         if lu.type == AUTO:

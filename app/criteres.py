@@ -4,12 +4,14 @@ Le filtre est gratuit (Python, sans LLM) : seules les offres qui le passent cons
 du quota Gemini au matching.
 """
 
+import hashlib
 import re
 from copy import deepcopy
 
 import psycopg
 from psycopg.types.json import Jsonb
 
+from app import geo
 from app.collecte.normalisation import contrat_depuis_intitule, niveau, sans_accents
 from app.pertinence import est_data
 
@@ -27,8 +29,12 @@ DEFAUTS: dict = {
             "power bi",
         ],
         "contrats_exclus": ["stage", "alternance", "freelance"],
+        # Zone « ville + rayon » : si les deux sont remplis, elle remplace la liste de lieux.
+        "zone_ville": "",
+        "zone_rayon_km": 0,
         "niveaux_exclus": ["senior", "lead"],
-        # Lieux acceptés (Île-de-France et télétravail). Lieu inconnu : accepté.
+        # Lieux acceptés quand aucune zone « ville + rayon » n'est réglée (Île-de-France et
+        # télétravail). Lieu inconnu : proposé, « à vérifier ».
         "lieux": [
             "paris",
             "ile de france",
@@ -84,6 +90,7 @@ DEFAUTS: dict = {
         "relancer_spontanees": False,
         "rapport_jours": 3,
         "spontanees_par_jour": 5,
+        "spontanees_auto_par_jour": 5,  # spontanées envoyées automatiquement au plus par jour
         "envois_par_jour": 10,
         "envois_auto_par_jour": 10,  # candidatures envoyées automatiquement au plus par jour
         "relances_auto_par_jour": 15,  # relances envoyées automatiquement au plus par jour
@@ -94,7 +101,8 @@ DEFAUTS: dict = {
     "veille": {"frequence_minutes": 60, "entreprises_par_defaut": 5, "initialisee": False},
     # Envoi en 1 clic depuis Gmail : désactivé tant que tu ne l'actives pas (onglet Spontanées).
     # relances_auto : relances dues envoyées sans ton clic (activé à ta demande du 14/11/2026).
-    "envoi": {"actif": False, "auto": False, "relances_auto": True},
+    # spontanees_auto : spontanées envoyées sans ton clic (coupé tant que tu ne l'actives pas).
+    "envoi": {"actif": False, "auto": False, "relances_auto": True, "spontanees_auto": False},
     # Coordonnées imprimées sur les CV et LM générés (jamais envoyées au LLM).
     "identite": {},
     # Réponses des formulaires de candidature (salaire, disponibilité…) : jamais imprimées
@@ -126,7 +134,9 @@ def _bas(t: str) -> str:
     return " " + re.sub(r"[^a-z0-9]+", " ", sans_accents(t or "").lower()) + " "
 
 
-def refus(intitule: str, lieu: str, criteres: dict) -> str | None:
+def refus(
+    intitule: str, lieu: str, criteres: dict, conn: psycopg.Connection | None = None
+) -> str | None:
     """Motif pour lequel l'offre ne correspond pas aux critères, ou None si elle passe."""
     titre = _bas(intitule)
     if not (est_data(intitule) or any(f" {_bas(p).strip()} " in titre for p in criteres["postes"])):
@@ -137,14 +147,95 @@ def refus(intitule: str, lieu: str, criteres: dict) -> str | None:
     exclus = set(criteres["niveaux_exclus"]) & set(niveau(intitule))
     if exclus:
         return f"niveau exclu ({', '.join(sorted(exclus))})"
-    if lieu_accepte(lieu, criteres) is False:
+    if lieu_accepte(lieu, criteres, conn) is False:
         return f"lieu hors zone ({lieu.strip()})"
     return None
 
 
-def lieu_accepte(lieu: str | None, criteres: dict) -> bool | None:
-    """True si le lieu est dans la zone, False sinon, None s'il est inconnu."""
-    if not lieu or not lieu.strip():
-        return None
-    bas = _bas(lieu)
-    return any(f" {_bas(x).strip()} " in bas for x in criteres["lieux"])
+# --- Zone ------------------------------------------------------------------------------------
+# Statut du lieu d'une offre :
+#   dans_zone   : dans le rayon autour de ta ville (ou dans la liste de lieux) ;
+#   hors_zone   : refusée ;
+#   teletravail : télétravail complet sans ville dans la zone : proposée, signalée ;
+#   a_verifier  : lieu absent, vague (« Île-de-France ») ou introuvable : proposée, signalée.
+# Seul « dans_zone » peut partir en candidature automatique.
+DANS_ZONE, HORS_ZONE, TELETRAVAIL, A_VERIFIER = (
+    "dans_zone",
+    "hors_zone",
+    "teletravail",
+    "a_verifier",
+)
+
+
+def rayon(criteres: dict) -> tuple[str, float] | None:
+    """(ville, rayon en km) si la zone « ville + rayon » est réglée."""
+    ville = str(criteres.get("zone_ville") or "").strip()
+    try:
+        km = float(criteres.get("zone_rayon_km") or 0)
+    except (TypeError, ValueError):
+        km = 0
+    return (ville, km) if ville and km > 0 else None
+
+
+def signature_zone(criteres: dict) -> str:
+    """Change quand la zone change : les offres déjà situées sont alors recalculées."""
+    z = rayon(criteres)
+    if z:
+        return f"rayon:{geo.bas(z[0])}:{z[1]:g}"
+    mots = ",".join(sorted(_bas(x).strip() for x in criteres.get("lieux", [])))
+    return "mots:" + hashlib.sha1(mots.encode()).hexdigest()[:12]
+
+
+def statut_lieu(
+    lieu: str | None, criteres: dict, conn: psycopg.Connection | None = None
+) -> tuple[str, float | None]:
+    """(statut, distance en km si connue) du lieu d'une offre."""
+    nom, remote = geo.commune(lieu or "")
+    z = rayon(criteres)
+    if z is None:  # liste de lieux
+        if nom and any(
+            f" {_bas(x).strip()} " in _bas(lieu or "") for x in _lieux_sans_remote(criteres)
+        ):
+            return DANS_ZONE, None
+        if remote:
+            return TELETRAVAIL, None
+        return (HORS_ZONE if nom else A_VERIFIER), None
+    if nom:
+        origine, point = geo.coordonnees(z[0], conn), geo.coordonnees(nom, conn)
+        if origine and point:
+            d = round(geo.distance_km(origine, point), 1)
+            if d <= z[1]:
+                return DANS_ZONE, d
+            return (TELETRAVAIL if remote else HORS_ZONE), d
+    return (TELETRAVAIL if remote else A_VERIFIER), None
+
+
+def _lieux_sans_remote(criteres: dict) -> list[str]:
+    return [x for x in criteres.get("lieux", []) if not geo._TELETRAVAIL.search(geo.bas(x))]
+
+
+def lieu_accepte(
+    lieu: str | None, criteres: dict, conn: psycopg.Connection | None = None
+) -> bool | None:
+    """True si le lieu est dans la zone (ou télétravail complet), False s'il en est hors,
+    None s'il est inconnu."""
+    statut, _ = statut_lieu(lieu, criteres, conn)
+    return {DANS_ZONE: True, TELETRAVAIL: True, HORS_ZONE: False}.get(statut)
+
+
+def situer_offres(conn: psycopg.Connection, criteres: dict, limite: int = 500) -> int:
+    """Note le statut du lieu (et la distance) des offres ouvertes pas encore situées pour la
+    zone actuelle ; l'appli s'en sert pour ses étiquettes et ses filtres."""
+    sig = signature_zone(criteres)
+    rows = conn.execute(
+        "SELECT id, ville FROM offres WHERE statut_validite IN ('a_verifier', 'valide')"
+        " AND lieu_zone IS DISTINCT FROM %s ORDER BY recu_le DESC LIMIT %s",
+        (sig, limite),
+    ).fetchall()
+    for r in rows:
+        statut, km = statut_lieu(r["ville"], criteres, conn)
+        conn.execute(
+            "UPDATE offres SET lieu_statut = %s, distance_km = %s, lieu_zone = %s WHERE id = %s",
+            (statut, km, sig, r["id"]),
+        )
+    return len(rows)

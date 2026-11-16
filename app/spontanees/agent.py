@@ -1,4 +1,4 @@
-"""Agent Spontanées : prépare des mails de candidature spontanée, que TU envoies.
+"""Agent Spontanées : prépare des mails de candidature spontanée et, si tu l'as activé, les envoie.
 
 Cibles : les entreprises de ta veille (ou ajoutées dans l'onglet « Spontanées ») dont le site
 web est connu. Pour chacune :
@@ -9,8 +9,14 @@ web est connu. Pour chacune :
    d'accueil de l'entreprise ; garde-fou de véracité (aucun outil ni chiffre inventé) ;
 4. brouillon enregistré dans `spontanees` ; signature ajoutée par le code (jamais par le LLM).
 
-Au plus `seuils.spontanees_par_jour` (5) brouillons par jour. Rien n'est envoyé : l'onglet
-« Spontanées » propose « Ouvrir dans ma messagerie », puis « J'ai envoyé ».
+Au plus `seuils.spontanees_par_jour` (5) brouillons par jour. Interrupteur
+`envoi.spontanees_auto` coupé : rien n'est envoyé, l'onglet « Spontanées » propose « Envoyer ».
+Activé : chaque brouillon sûr (garde-fou passé, rien à valider) part tout seul avec CV + LM en
+pièces jointes et le lien du portfolio, au plus `seuils.spontanees_auto_par_jour` (5) par jour.
+Un mail de redirection (« écrivez plutôt à X », voir suite.py) attend toujours ton clic.
+
+Sites web : complétés d'après le site carrières, les fiches d'offres ou les adresses mail de
+l'employeur, seulement si le domaine porte son nom.
 
 Usage :  python -m app.spontanees.agent [--entreprise NOM --site URL [--email ADRESSE]]
 """
@@ -21,11 +27,12 @@ import re
 import psycopg
 from psycopg.types.json import Jsonb
 
-from app import activite, criteres, llm, scoring
+from app import activite, criteres, envoi, llm, scoring
 from app.ats import service as ats
 from app.ats.anonymisation import verifier_masque
+from app.collecte.normalisation import norm_entreprise
 from app.dedup import candidature_recente
-from app.entreprises import entreprise_id
+from app.entreprises import entreprise_id, est_generique_ou_ats
 from app.generation import identite, verite
 from app.generation.adaptation import SCHEMA_LM
 from app.llm import generer_json
@@ -56,7 +63,8 @@ vouvoiement, enthousiasme sincère, aucune formule creuse. 3 paragraphes, 130 à
     à la restitution auprès des clients — avec une bonne gouvernance (qualité, documentation). Cite
     2 à 3 compétences du CV utiles à son activité (outil + usage), puis 1 à 2 qualités humaines
     que sa culture valorise et que le CV ou les faits démontrent.
-(3) CV et lettre en pièces jointes, portfolio en ligne, disponibilité (CDI) et proposition d'un échange.
+(3) disponibilité (CDI) et proposition d'un échange. Ne parle NI des pièces jointes NI du portfolio :
+    la phrase qui les annonce (avec le lien) est ajoutée à part.
 - N'invente rien : faits sur le candidat = CV, lettre ou <faits> ; faits sur l'entreprise =
   <entreprise> seulement ; si elle est vide, reste général sur son secteur sans rien affirmer.
 - objet : court et explicite (« Candidature spontanée – Analytics Engineer junior »).
@@ -114,7 +122,11 @@ def _contact(conn: psycopg.Connection, ent: dict) -> dict | None:
             (
                 ent["id"],
                 t.email,
-                FONCTION_GENERIQUE if t.generique else "recrutement",
+                FONCTION_GENERIQUE
+                if t.generique
+                else "recruteur (publié)"
+                if t.nominatif
+                else "recrutement",
                 t.source_url,
             ),
         )
@@ -124,8 +136,19 @@ def _contact(conn: psycopg.Connection, ent: dict) -> dict | None:
 
 def _signature(ident: dict) -> str:
     lignes = [ident.get("nom"), ident.get("titre"), ident.get("telephone"), ident.get("email")]
-    lignes += [ident.get("linkedin"), ident.get("portfolio")]
+    lignes += [ident.get("linkedin")]  # le portfolio est annoncé dans le corps du mail
     return "\n".join(x for x in lignes if x)
+
+
+def phrase_pieces(ident: dict) -> str:
+    """Annonce des pièces jointes et du portfolio (lien cliquable dans la version HTML)."""
+    portfolio = (ident.get("portfolio") or "").strip()
+    if portfolio:
+        return (
+            "Vous trouverez ci-joint mon CV et ma lettre de motivation, ainsi que mon portfolio"
+            f" en ligne : {portfolio}"
+        )
+    return "Vous trouverez ci-joint mon CV et ma lettre de motivation."
 
 
 def assembler(res: dict, ident: dict, generique: bool = False) -> str:
@@ -134,6 +157,7 @@ def assembler(res: dict, ident: dict, generique: bool = False) -> str:
     if generique:
         morceaux.append(TRANSMISSION)
     morceaux += res.get("paragraphes", [])
+    morceaux.append(phrase_pieces(ident))
     morceaux.append(res.get("formule") or "Je vous prie d'agréer mes salutations distinguées.")
     corps = "\n\n".join(m.strip() for m in morceaux if m and m.strip())
     # Si le modèle a laissé un jeton de masquage, on le retire plutôt que d'envoyer « [NOM] ».
@@ -236,6 +260,119 @@ def preparer(conn: psycopg.Connection, eid: int) -> dict:
     }
 
 
+def _porte_le_nom(domaine: str, nom: str) -> bool:
+    """« sncf.com » pour « SNCF Voyageurs », « bnpparibas.com » pour « BNP Paribas »."""
+    etiquette = re.sub(r"[^a-z0-9]", "", contacts.domaine_racine(domaine).split(".")[0])
+    mots = norm_entreprise(nom).split()
+    compact = "".join(mots)
+    if len(etiquette) < 3 or not compact:
+        return False
+    return (
+        etiquette == compact
+        or etiquette in compact
+        or (len(mots[0]) >= 3 and etiquette.startswith(mots[0]))
+    )
+
+
+def site_probable(nom: str, adresses: list[str]) -> str | None:
+    """Domaine le plus sûr parmi des URL ou adresses mail de l'employeur, ou None : celui qui
+    porte exactement son nom (sncf.fr) passe avant un domaine voisin (sncf-connect.com)."""
+    mots = norm_entreprise(nom).split()
+    exacts = {"".join(mots), mots[0] if mots else ""}
+    trouves = []
+    for a in adresses:
+        if not a:
+            continue
+        if "@" in a and "://" not in a:
+            hote = a.rpartition("@")[2]
+        else:
+            hote = re.sub(r"^https?://", "", a, flags=re.IGNORECASE).split("/")[0].split(":")[0]
+        hote = hote.lower().strip(".")
+        if "." not in hote or est_generique_ou_ats(hote) or not _porte_le_nom(hote, nom):
+            continue
+        racine = contacts.domaine_racine(hote)
+        etiquette = re.sub(r"[^a-z0-9]", "", racine.split(".")[0])
+        trouves.append((etiquette not in exacts, racine))
+    return "https://" + min(trouves)[1] if trouves else None
+
+
+def completer_sites(conn: psycopg.Connection, limite: int = 200) -> int:
+    """Renseigne le site web des employeurs intéressants (veille active ou offre data hors
+    « hors zone ») d'après leur site carrières, leurs offres et leurs adresses mail."""
+    rows = conn.execute(
+        """
+        SELECT e.id, e.nom_affiche, e.site_carrieres,
+               (SELECT array_agg(DISTINCT coalesce(o.url_fiche, o.url_cle)) FROM offres o
+                WHERE o.entreprise_id = e.id) AS urls,
+               (SELECT array_agg(DISTINCT x.email) FROM (
+                    SELECT email FROM contacts WHERE entreprise_id = e.id AND email IS NOT NULL
+                    UNION SELECT contact_email FROM candidatures
+                    WHERE entreprise_id = e.id AND contact_email IS NOT NULL) x) AS emails
+        FROM entreprises e
+        WHERE e.site_web IS NULL AND (
+            EXISTS (SELECT 1 FROM veille_entreprises v WHERE v.entreprise_id = e.id AND v.active)
+            OR EXISTS (SELECT 1 FROM offres o WHERE o.entreprise_id = e.id AND o.pertinente
+                       AND coalesce(o.lieu_statut, '') <> 'hors_zone'))
+        ORDER BY e.id DESC LIMIT %s
+        """,
+        (limite,),
+    ).fetchall()
+    n = 0
+    for r in rows:
+        site = site_probable(
+            r["nom_affiche"] or "", [r["site_carrieres"], *(r["urls"] or []), *(r["emails"] or [])]
+        )
+        if site:
+            conn.execute("UPDATE entreprises SET site_web = %s WHERE id = %s", (site, r["id"]))
+            n += 1
+    return n
+
+
+def envoyer_auto(conn: psycopg.Connection, sid: int) -> str | None:
+    """Envoie un brouillon sûr (garde-fou passé, rien à valider) ; renvoie le motif s'il reste
+    pour toi. Lève envoi.EnvoiImpossible (interrupteur coupé, plafond…)."""
+    b = conn.execute(
+        "SELECT s.objet, s.corps, s.verification, s.a_valider, s.destinataire,"
+        " e.nom_affiche AS entreprise FROM spontanees s JOIN entreprises e ON e.id = s.entreprise_id"
+        " WHERE s.id = %s AND s.statut = 'brouillon'",
+        (sid,),
+    ).fetchone()
+    if b is None:
+        return "brouillon introuvable"
+    if b["a_valider"]:
+        return b["a_valider"]
+    if not (b["verification"] or {}).get("ok", False):
+        motif = "paragraphe retiré par le garde-fou : à relire"
+        conn.execute("UPDATE spontanees SET a_valider = %s WHERE id = %s", (motif, sid))
+        conn.commit()
+        return motif
+    envoi.envoyer_spontanee(conn, sid, b["objet"], b["corps"], auto=True)
+    conn.commit()
+    activite.noter(
+        "spontanees",
+        "Spontanée envoyée",
+        entreprise=b["entreprise"],
+        detail=f"à {b['destinataire']} (CV + LM + portfolio)",
+    )
+    return None
+
+
+def _envois_auto(conn: psycopg.Connection, bilan: dict) -> None:
+    """Brouillons récents qui peuvent partir seuls (dans les plafonds du jour)."""
+    for b in conn.execute(
+        "SELECT id FROM spontanees WHERE statut = 'brouillon' AND a_valider IS NULL"
+        " AND cree_le > now() - interval '14 days' ORDER BY cree_le"
+    ).fetchall():
+        try:
+            if envoyer_auto(conn, b["id"]) is None:
+                bilan["envoyées"] += 1
+        except envoi.EnvoiImpossible as e:
+            conn.rollback()
+            bilan["note envoi"] = str(e)
+            if "Plafond" in str(e) or "désactivées" in str(e) or "autoris" in str(e):
+                return
+
+
 def cibles(conn: psycopg.Connection) -> list[dict]:
     """Entreprises à solliciter : veille active ou cibles ajoutées, avec un site ou un contact."""
     return conn.execute(
@@ -259,7 +396,11 @@ def executer(conn: psycopg.Connection) -> dict:
     faites = conn.execute(
         "SELECT count(*) AS n FROM spontanees WHERE cree_le::date = current_date AND statut <> 'erreur'"
     ).fetchone()["n"]
-    bilan = {"préparées": 0, "écartées": 0}
+    bilan = {"préparées": 0, "écartées": 0, "envoyées": 0}
+    bilan["sites trouvés"] = completer_sites(conn)
+    conn.commit()
+    auto = envoi.etat(conn)
+    auto = auto["autorise"] and auto["spontanees_auto"]
     if not llm.disponible():
         return {**bilan, "note": "clé Gemini absente"}
     for ent in cibles(conn):
@@ -294,6 +435,9 @@ def executer(conn: psycopg.Connection) -> dict:
                 else "."
             ),
         )
+    conn.commit()
+    if auto:
+        _envois_auto(conn, bilan)
     return bilan
 
 

@@ -192,6 +192,79 @@ def relance_interdite(texte: str) -> str | None:
     return None
 
 
+# --- Suite d'une candidature spontanée ------------------------------------------------------
+# « Pas de recrutement pour l'instant » : une seule relance 30 jours plus tard.
+_MOMENT = r"(?:pour le moment|pour l'instant|actuellement|en ce moment|à ce jour|a ce jour)"
+_PAS_MAINTENANT = _motifs(
+    rf"pas (?:de |d'|d’)?(?:postes?|besoins?|recrutements?|opportunit[ée]s?|ouvertures?)"
+    rf"(?: [\w'’ ]{{0,30}})? {_MOMENT}",
+    rf"{_MOMENT}[^.]{{0,40}}pas (?:de |d'|d’)?(?:postes?|besoins?|recrutements?|opportunit|ouvertures?)",
+    rf"ne recrut(?:ons|e) pas {_MOMENT}",
+    r"(?:conserv|gard)(?:ons|erons|ons pr[ée]cieusement)[^.]{0,30}(?:votre |ton )?(?:cv|candidature|profil)",
+    r"revien(?:drons|dra) vers vous[^.]{0,50}(?:\bsi\b|d[èe]s|lorsqu|quand)",
+    r"not (?:hiring|recruiting) (?:at the moment|right now|currently|at this time)",
+    r"no (?:open )?(?:positions?|openings?|vacanc\w+) (?:at the moment|right now|currently|at this time)",
+    r"keep your (?:cv|resume|application|profile) on file",
+)
+# Refus de principe des spontanées : ce n'est pas « plus tard », on n'insiste pas.
+_JAMAIS_SPONTANEE = _motifs(
+    r"ne (?:prenons|prend|traitons|acceptons|recevons) (?:pas|plus) (?:de |les )?candidatures? spontan",
+    r"(?:do not|don't) (?:accept|consider) (?:unsolicited|spontaneous) applications",
+)
+
+
+def pas_maintenant(texte: str) -> bool:
+    """La réponse dit « pas de recrutement pour l'instant » (sans fermer la porte)."""
+    t = re.sub(r"\s+", " ", texte or "")
+    return bool(_PAS_MAINTENANT.search(t)) and not _JAMAIS_SPONTANEE.search(t)
+
+
+# « Merci d'adresser votre candidature à … » : écrire à la personne ou au service indiqué.
+_REDIRECTION = _motifs(
+    r"(?:transmettre|adresser|envoyer|renvoyer|faire parvenir|transf[ée]rer|r[ée]exp[ée]dier)"
+    r"[^.]{0,60}(?:\b[àa]\b|\bau\b|aupr[èe]s)",
+    r"(?:contacter|[ée]crire [àa]|vous rapprocher d|prendre contact avec|vous adresser [àa])",
+    r"(?:reach out to|send (?:it|your (?:cv|resume|application)) to|forward(?:ed)? (?:it|your))",
+    r"(?:the right person|la (?:bonne )?personne (?:en charge|concern[ée]e|comp[ée]tente))",
+)
+# Sans adresse écrite, seule une consigne explicite vaut redirection (« n'hésitez pas à nous
+# contacter » est une formule de politesse).
+_REDIRECTION_SANS_ADRESSE = _motifs(
+    r"(?:adresser|envoyer|transmettre|renvoyer) (?:votre|ta) (?:candidature|cv|demande|mail|message)"
+    r"[^.]{0,20}(?:directement )?(?:\b[àa]\b|\bau\b|aupr[èe]s)",
+    r"(?:il|elle) faut (?:vous adresser|contacter|[ée]crire)",
+    r"(?:please )?(?:contact|reach out to) (?:our|the) (?:hr|recruitment|talent)",
+)
+_ADRESSE = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
+_ADRESSE_ROBOT = re.compile(
+    r"no-?reply|ne-?pas-?repondre|donotreply|notification|mailer|postmaster", re.IGNORECASE
+)
+
+
+@dataclass(frozen=True)
+class Redirection:
+    email: str | None  # adresse indiquée dans la réponse (None : à chercher par toi)
+
+
+def redirection(texte: str, exclues: set[str]) -> Redirection | None:
+    """La réponse invite à écrire à une autre personne ou un autre service, ou None.
+    `exclues` : mes adresses, celle de l'expéditeur et celle déjà contactée."""
+    t = re.sub(r"\s+", " ", texte or "")
+    if relance_interdite(t):
+        return None  # renvoi vers le site officiel ou « ne plus contacter » : pas d'insistance
+    exclues = {e.lower() for e in exclues if e}
+    autres = [
+        a.strip(".").lower()
+        for a in _ADRESSE.findall(t)
+        if a.strip(".").lower() not in exclues and not _ADRESSE_ROBOT.search(a)
+    ]
+    if autres and _REDIRECTION.search(t):
+        return Redirection(autres[0])
+    if _REDIRECTION_SANS_ADRESSE.search(t):
+        return Redirection(None)
+    return None
+
+
 def parle_de_candidature(sujet: str) -> bool:
     """L'objet du mail parle d'une candidature (le corps ne suffit pas : newsletters)."""
     return bool(_SUJET_CANDIDATURE.search(sujet))

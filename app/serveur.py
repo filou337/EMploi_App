@@ -154,7 +154,8 @@ def offres(
         """
         SELECT o.id, o.intitule, o.ville, o.contrat, o.source, o.statut_validite, o.fiche_complete,
                o.url_cle, o.url_fiche, o.recu_le, o.date_publication, o.note_validite, o.score,
-               o.classe, o.entreprise_id, e.nom_affiche AS entreprise, e.ats,
+               o.classe, o.entreprise_id, o.lieu_statut, o.distance_km,
+               e.nom_affiche AS entreprise, e.ats,
                (SELECT c.statut FROM candidatures c WHERE c.offre_id = o.id) AS candidature,
                (SELECT a.score_matching FROM analyses a WHERE a.offre_id = o.id
                 ORDER BY a.cree_le DESC LIMIT 1) AS score_matching
@@ -805,7 +806,7 @@ def opposition_spontanee(sid: int, conn: Conn = Depends(db)):
 # --- Envoi en 1 clic depuis Gmail (toujours sur ton clic) -----------------------------------
 class Interrupteur(BaseModel):
     actif: bool
-    cle: Literal["actif", "auto"] = "actif"
+    cle: Literal["actif", "auto", "spontanees_auto"] = "actif"
 
 
 class MailAEnvoyer(BaseModel):

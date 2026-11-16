@@ -203,7 +203,7 @@ def candidates(conn: psycopg.Connection, minimum: float, limite: int) -> list[di
     return conn.execute(
         """
         SELECT o.id, o.intitule, o.texte, o.score, o.url_fiche, o.url_cle, o.entreprise_id, o.contrat,
-               e.nom_affiche AS entreprise, e.site_web, e.ats
+               o.ville, e.nom_affiche AS entreprise, e.site_web, e.ats
         FROM offres o LEFT JOIN entreprises e ON e.id = o.entreprise_id
         WHERE o.fiche_complete AND o.statut_validite = 'valide' AND o.score IS NOT NULL
           AND o.score >= %s AND (o.motif IS NULL OR o.motif NOT LIKE 'contrainte%%')
@@ -303,7 +303,22 @@ def kit_formulaire(conn: psycopg.Connection, o: dict, lm_texte: str) -> dict:
     }
 
 
-def preparer(conn: psycopg.Connection, o: dict, seuil: float, plafond_haut: int = 5) -> dict:
+def motif_lieu(statut: str, ville: str | None) -> str | None:
+    """Seule une offre dont le lieu est sûrement dans ta zone part toute seule."""
+    if statut == criteres.TELETRAVAIL:
+        return f"télétravail complet ({ville or 'sans ville'}) : lieu à vérifier, à envoyer par toi"
+    if statut != criteres.DANS_ZONE:
+        return f"lieu à vérifier ({ville or 'non précisé'}) : à envoyer par toi"
+    return None
+
+
+def preparer(
+    conn: psycopg.Connection,
+    o: dict,
+    seuil: float,
+    plafond_haut: int = 5,
+    statut_lieu: str = criteres.A_VERIFIER,
+) -> dict:
     """Dossier + mail pour une offre ; renvoie la ligne candidatures_auto (statut pret / mise_de_cote)."""
     from app.generation.fabrique import fabriquer
 
@@ -337,6 +352,8 @@ def preparer(conn: psycopg.Connection, o: dict, seuil: float, plafond_haut: int 
             motif = "dossier à relire : " + "; ".join(fab.get("motifs") or [])
         else:
             cv_origine = True
+    lieu = motif_lieu(statut_lieu, o.get("ville"))
+    motif = motif or lieu
     if (
         motif is None
         and float(o["score"]) >= seuil
@@ -347,9 +364,12 @@ def preparer(conn: psycopg.Connection, o: dict, seuil: float, plafond_haut: int 
             f" ({plafond_haut} envois automatiques de ce niveau déjà faits aujourd'hui)"
         )
     kit = None
-    if motif is None and trouve is None:
+    if trouve is None and motif in (None, lieu):
         kit = kit_formulaire(conn, o, lm_texte)
-        motif = "aucun contact publié par l'employeur : kit formulaire prêt, postule sur son site"
+        motif = (
+            motif
+            or "aucun contact publié par l'employeur : kit formulaire prêt, postule sur son site"
+        )
     conn.execute(
         "UPDATE candidatures_auto SET cv_origine = %s, kit = %s WHERE id = %s",
         (cv_origine, Jsonb(kit) if kit else None, ca_id),
@@ -374,7 +394,8 @@ def executer(conn: psycopg.Connection) -> dict:
         conn, float(s.get("envoi_auto_min", 50)), int(s.get("candidatures_auto_par_passage", 3))
     ):
         recente = o["entreprise_id"] and candidature_recente(conn, o["entreprise_id"])
-        if recente or hors_cdi_cdd(o):
+        statut_lieu, _km = criteres.statut_lieu(o.get("ville"), p["criteres"], conn)
+        if recente or hors_cdi_cdd(o) or statut_lieu == criteres.HORS_ZONE:
             continue
         aid = activite.debut(
             "candidatures_auto",
@@ -383,7 +404,7 @@ def executer(conn: psycopg.Connection) -> dict:
             detail=f"note {float(o['score']):.0f}/100",
         )
         try:
-            r = preparer(conn, o, seuil, int(s.get("envois_auto_haut_par_jour", 5)))
+            r = preparer(conn, o, seuil, int(s.get("envois_auto_haut_par_jour", 5)), statut_lieu)
             conn.commit()
             activite.fin(
                 aid,

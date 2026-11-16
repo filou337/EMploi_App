@@ -15,7 +15,7 @@ ce qu'il fait dans le **Salon** de l'appli (fil en direct et journal des passage
 | 5 | Veille | `app/agents/veille.py` | Non |
 | 6 | Matching | `app/agents/matching.py` | Non |
 | 7 | **Candidatures** | `app/agents/candidature_auto.py` | **Oui : mails de candidature** |
-| 8 | Spontanées | `app/spontanees/agent.py` | Non (brouillons, envoyés par toi) |
+| 8 | Spontanées | `app/spontanees/agent.py` | Oui si `envoi.spontanees_auto` (5 par jour), sinon par toi |
 | 9 | Rapport | `app/rapport.py` | Non (lu dans l'appli) |
 
 ## 1. Recherche
@@ -61,7 +61,9 @@ Pour chaque offre **CDI / CDD** notée **≥ 50** (`seuils.envoi_auto_min`), san
 de la meilleure à la moins bonne :
 
 1. **Garde-fous** : jamais deux fois le même employeur en 3 mois ; jamais de stage, alternance,
-   freelance ou intérim ; contact en opposition refusé.
+   freelance ou intérim ; contact en opposition refusé ; jamais hors de ta zone. Un lieu absent,
+   vague (« Île-de-France ») ou en télétravail complet : dossier préparé mais mis de côté
+   (« lieu à vérifier »), à envoyer par toi.
 2. **Dossier** : CV et lettre adaptés à l'offre (véracité contrôlée), relus comme un ATS.
 3. **Contact** : adresse publiée par l'employeur (fiche de l'offre, contact connu, page
    recrutement de son site). **Jamais d'adresse devinée.**
@@ -82,9 +84,24 @@ de la meilleure à la moins bonne :
 Prévu ensuite : remplissage automatique des formulaires des sites carrières.
 
 ## 8. Spontanées
-Cible les entreprises de ta veille dont le site est connu, trouve une adresse RH publique et
-rédige un mail de candidature spontanée (5 brouillons par jour au plus). Rien n'est envoyé :
-tu envoies depuis l'onglet Spontanées.
+Complète le site web des employeurs intéressants (veille active ou offre data dans ta zone)
+d'après leur site carrières, leurs offres et leurs adresses mail, seulement si le domaine porte
+leur nom. Trouve l'adresse que l'entreprise publie elle-même : RH (recrutement@, rh@…), à défaut
+un recruteur nommé sur sa page carrières, en dernier secours contact@ (le mail demande alors de
+transmettre). Jamais d'adresse devinée. Rédige le mail (vision de l'entreprise, compétences du
+CV, garde-fou de véracité) ; la phrase finale annonce CV + LM joints et le lien du portfolio
+(cliquable : le mail part aussi en HTML). 5 par jour au plus.
+
+**Envoi automatique** (interrupteur de l'onglet Spontanées, coupé par défaut) : chaque mail sûr
+part seul, au plus `seuils.spontanees_auto_par_jour` (5) par jour. Un paragraphe retiré par le
+garde-fou ou une redirection attend ton clic (`spontanees.a_valider`).
+
+**Réponses** (lues par l'agent Suivi, `app/spontanees/suite.py`) :
+- renvoi vers le site officiel ou « ne plus contacter » : aucune relance, pas d'insistance ;
+- « écrivez plutôt à X » avec l'adresse : mail préparé pour X (« Sur les conseils de… »), à
+  valider ; sans adresse : notification ;
+- « pas de recrutement pour l'instant » : une seule relance 30 jours après la réponse (agent
+  Relances), puis plus rien ; sans réponse du tout : pas de relance.
 
 ## 9. Rapport
 Tous les 3 jours : offres repérées, candidatures envoyées, réponses, relances dues, dossiers

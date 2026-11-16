@@ -104,7 +104,7 @@ def _surveiller(conn: psycopg.Connection, ent: dict, crit: dict, bilan: Bilan) -
     source = f"{tableau.ats}:{tableau.slug}"
     gardes = []
     for p in tableau.postes:
-        if criteres.refus(p.titre, p.lieu, crit):
+        if criteres.refus(p.titre, p.lieu, crit, conn):
             bilan.hors_criteres += 1
         else:
             gardes.append(p)

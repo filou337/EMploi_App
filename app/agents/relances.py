@@ -1,7 +1,8 @@
 """Agent Relances : envoie tout seul les relances dues (J+7, puis J+14), sans ton clic.
 
 À chaque passage, après l'agent Suivi (qui vient de lire les réponses) :
-1. relances dues (vue `v_relances`) des candidatures envoyées depuis le 1er du mois dernier ;
+1. relances dues (vue `v_relances`) des candidatures envoyées depuis le 1er du mois dernier, et
+   la relance unique à J+30 d'une réponse « pas de recrutement pour l'instant » ;
 2. jamais si l'entreprise a répondu (positif ou refus), si sa réponse renvoie vers son site
    officiel ou demande de ne plus être recontacté (`relance_ignoree`, posé par l'agent Suivi),
    si tu as cliqué « Ne pas relancer », ou si le contact est en opposition ;
@@ -47,6 +48,17 @@ def texte_relance(r: dict, ident: dict, lang: str = "fr") -> tuple[str, str]:
         # Nom déduit d'un domaine (« werecruit », « sncf ») : peut être le site de recrutement
         # plutôt que l'employeur -> formule neutre.
         entreprise = None
+    if r.get("motif") == "plus_tard":
+        # Réponse « pas de recrutement pour l'instant » il y a 30 jours : une seule relance.
+        objet = f"Relance – candidature{' spontanée' if r.get('type') == 'spontanee' else ''}"
+        corps = (
+            "Bonjour,\n\nVous m'aviez indiqué il y a un mois ne pas avoir de besoin de recrutement"
+            " pour le moment. Je me permets de revenir vers vous : la situation a-t-elle évolué ?"
+            f" Je reste très intéressé à l'idée de rejoindre {entreprise or 'votre équipe'} et"
+            " serais ravi d'en discuter avec vous.\n\nBien cordialement,\n"
+            f"{nom}{tel}"
+        )
+        return objet, corps
     if lang == "en":
         objet = f"Follow-up – application{f' for the {poste} position' if poste else ''}"
         if r["numero"] == 1:
@@ -136,7 +148,8 @@ def dues(conn: psycopg.Connection) -> list[dict]:
         """
         SELECT r.*, c.boite, c.gmail_thread_id, o.texte AS offre_texte FROM v_relances r
         JOIN candidatures c ON c.id = r.id LEFT JOIN offres o ON o.id = c.offre_id
-        WHERE r.postule_le >= date_trunc('month', current_date) - interval '1 month'
+        WHERE (r.postule_le >= date_trunc('month', current_date) - interval '1 month'
+               OR r.motif = 'plus_tard')
           AND r.contact_email IS NOT NULL
         ORDER BY r.due_le, r.id
         """

@@ -1,8 +1,10 @@
 """Contact RH d'une entreprise, trouvé sur les pages publiques de son site.
 
 Garde-fous (RGPD, respect des sites) :
-- seules les adresses liées au recrutement sont gardées (recrutement@, rh@, jobs@, careers@…) ;
-  jamais une adresse nominative (prenom.nom@) ni un simple contact@ ;
+- d'abord les adresses liées au recrutement (recrutement@, rh@, jobs@, careers@…) ;
+- à défaut, l'adresse nominative d'un recruteur (prenom.nom@) seulement si l'entreprise la
+  publie elle-même sur sa page carrières / recrutement ; jamais une adresse devinée ;
+- en dernier secours (avec `secours`), contact@, info@… ;
 - seules les adresses du domaine de l'entreprise sont gardées ;
 - quelques pages seulement (accueil, contact, carrières, mentions légales), robots.txt respecté,
   une requête par seconde ; la page où l'adresse a été trouvée est enregistrée.
@@ -52,6 +54,7 @@ class ContactTrouve:
     email: str
     source_url: str
     generique: bool = False  # contact@, info@… : le mail demande de transmettre aux RH
+    nominatif: bool = False  # recruteur nommé, publié sur la page carrières de l'entreprise
 
 
 def site_normalise(site: str) -> str:
@@ -83,10 +86,32 @@ def est_adresse_generique(email: str) -> bool:
     return bool(_GENERIQUE.match(email.split("@", 1)[0]))
 
 
-def adresses(html: str, domaine: str, generiques: bool = False) -> list[str]:
+_NOMINATIF = re.compile(r"^[a-z][a-z'-]+[._-][a-z][a-z'-]+$")
+PAGES_CARRIERES = (
+    "/carrieres",
+    "/carriere",
+    "/recrutement",
+    "/rejoignez-nous",
+    "/careers",
+    "/jobs",
+)
+
+
+def est_adresse_nominative(email: str) -> bool:
+    """« marie.durand@acme.fr » (prénom.nom), pas « service.client@ »."""
+    local = email.split("@", 1)[0]
+    return bool(_NOMINATIF.match(local)) and not (
+        est_adresse_rh(email) or est_adresse_generique(email)
+    )
+
+
+def adresses(
+    html: str, domaine: str, generiques: bool = False, nominatives: bool = False
+) -> list[str]:
     """Adresses RH du domaine présentes dans la page (texte ou liens mailto).
 
-    Avec `generiques`, garde aussi contact@, info@… (jamais une adresse nominative).
+    Avec `generiques`, garde aussi contact@, info@… ; avec `nominatives` (page carrières
+    seulement), l'adresse d'un recruteur nommé publiée par l'entreprise.
     """
     texte = html.replace("&#64;", "@").replace("[at]", "@").replace("(at)", "@")
     vues = []
@@ -96,7 +121,11 @@ def adresses(html: str, domaine: str, generiques: bool = False) -> list[str]:
             continue
         if domaine_racine(email.rsplit("@", 1)[1]) != domaine:
             continue
-        if est_adresse_rh(email) or (generiques and est_adresse_generique(email)):
+        if (
+            est_adresse_rh(email)
+            or (generiques and est_adresse_generique(email))
+            or (nominatives and est_adresse_nominative(email))
+        ):
             vues.append(email)
     return vues
 
@@ -134,7 +163,8 @@ def trouver(
             continue
         if r.status_code != 200 or "html" not in r.headers.get("content-type", "html"):
             continue
-        for email in adresses(r.text, domaine, generiques=secours):
+        carrieres = chemin in PAGES_CARRIERES
+        for email in adresses(r.text, domaine, generiques=secours, nominatives=carrieres):
             trouves.setdefault(email, str(r.url))
         if any(est_adresse_rh(e) for e in trouves) and chemin in (
             "/recrutement",
@@ -150,6 +180,9 @@ def trouver(
     )
     if rh:  # une adresse RH existe : l'adresse générale n'est jamais proposée
         return [ContactTrouve(e, trouves[e]) for e in rh]
+    recruteurs = [e for e in trouves if est_adresse_nominative(e)]
+    if recruteurs:
+        return [ContactTrouve(e, trouves[e], nominatif=True) for e in recruteurs[:1]]
     generales = sorted(
         (e for e in trouves if est_adresse_generique(e)),
         key=lambda e: (not e.startswith("contact"), len(e)),

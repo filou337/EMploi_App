@@ -75,9 +75,9 @@ def base(monkeypatch, tmp_path):
 def _offre(c, ids, eid, score, motif=None, url="test:auto"):
     oid = c.execute(
         "INSERT INTO offres (url_cle, cle_floue, source, intitule, entreprise_id, texte, fiche_complete,"
-        " statut_validite, score, classe, motif, etape) VALUES (%s, 'x', 'manuelle', 'Data Analyst', %s,"
+        " statut_validite, score, classe, motif, etape, ville) VALUES (%s, 'x', 'manuelle', 'Data Analyst', %s,"
         " 'Missions SQL et Power BI. Candidature à talents@acme-auto.fr', TRUE, 'valide', %s, 'B', %s,"
-        " 'reperee') RETURNING id",
+        " 'reperee', 'Paris') RETURNING id",
         (url, eid, score, motif),
     ).fetchone()["id"]
     ids["offres"].append(oid)
@@ -310,9 +310,9 @@ def test_kit_formulaire_sans_contact_publie(base, monkeypatch):
     criteres.ecrire(c, "formulaire", {"salaire": "40 000 €", "disponibilite": "immédiate"})
     oid = c.execute(
         "INSERT INTO offres (url_cle, cle_floue, source, intitule, entreprise_id, texte, fiche_complete,"
-        " statut_validite, score, classe, url_fiche, etape) VALUES ('test:auto:kit', 'x', 'manuelle',"
+        " statut_validite, score, classe, url_fiche, etape, ville) VALUES ('test:auto:kit', 'x', 'manuelle',"
         " 'Data Analyst', %s, 'Missions SQL et Power BI, postulez en ligne.', TRUE, 'valide', 70, 'B',"
-        " 'https://jobs.lever.co/acme/123', 'reperee') RETURNING id",
+        " 'https://jobs.lever.co/acme/123', 'reperee', 'Paris') RETURNING id",
         (eid,),
     ).fetchone()["id"]
     ids["offres"].append(oid)
@@ -326,3 +326,9 @@ def test_kit_formulaire_sans_contact_publie(base, monkeypatch):
     assert champs["Salaire souhaité (brut annuel)"] == "40 000 €"
     assert champs["Disponibilité"] == "immédiate"
     assert kit["motivation"] == "Lettre.\n\nSuite."
+
+
+def test_motif_lieu():
+    assert ca.motif_lieu("dans_zone", "Paris") is None
+    assert "lieu à vérifier" in ca.motif_lieu("a_verifier", None)
+    assert "télétravail" in ca.motif_lieu("teletravail", "Remote")

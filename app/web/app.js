@@ -227,7 +227,41 @@ function rapportMatching(a) {
 }
 
 // --- Opportunités ----------------------------------------------------------------------------
-const filtreOffres = { statut: "a_verifier,valide", q: "", source: "", data: true };
+const filtreOffres = { statut: "a_verifier,valide", q: "", source: "", data: true, contrat: "", zone: "", unParEntreprise: false };
+
+// Contrat d'une offre : celui de l'annonce, sinon celui de l'intitulé.
+function contratOffre(o) {
+  const c = (o.contrat || "").toUpperCase();
+  if (c) return c;
+  const m = /\b(CDI|CDD)\b/i.exec(o.intitule || "");
+  return m ? m[1].toUpperCase() : "";
+}
+
+// Étiquette du lieu : distance depuis ta ville, ou « à vérifier » (jamais d'envoi automatique).
+function etiquetteLieu(o) {
+  const km = o.distance_km != null ? `${Math.round(o.distance_km)} km` : "";
+  return ({
+    dans_zone: km ? `<span class="etiquette vert">${km}</span>` : "",
+    hors_zone: `<span class="etiquette rouge">hors zone${km ? ` · ${km}` : ""}</span>`,
+    teletravail: '<span class="etiquette ambre" title="Télétravail complet : jamais envoyée automatiquement">télétravail · à vérifier</span>',
+    a_verifier: '<span class="etiquette ambre" title="Lieu absent ou vague : jamais envoyée automatiquement">lieu à vérifier</span>',
+  })[o.lieu_statut] || "";
+}
+
+// Garde le meilleur poste de chaque entreprise (score, puis matching, puis le plus récent).
+function unParEntreprise(rows) {
+  const note = (o) => [o.score ?? -1, o.score_matching ?? -1, Date.parse(o.recu_le) || 0];
+  const plusHaut = (a, b) => { const x = note(a), y = note(b); for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] > y[i]; return false; };
+  const groupes = new Map();
+  for (const o of rows) {
+    const cle = o.entreprise_id || o.entreprise || `offre-${o.id}`;
+    const g = groupes.get(cle);
+    if (!g) groupes.set(cle, { meilleur: o, autres: [] });
+    else if (plusHaut(o, g.meilleur)) { g.autres.push(g.meilleur); g.meilleur = o; }
+    else g.autres.push(o);
+  }
+  return [...groupes.values()].map((g) => ({ ...g.meilleur, autres: g.autres }));
+}
 
 async function vueOffres(v) {
   v.innerHTML = `<div class="entete"><div><h1>Tes opportunités.</h1>
@@ -240,10 +274,18 @@ async function vueOffres(v) {
       <select class="champ" id="f-source"><option value="">Toutes sources</option>
         <option value="linkedin">LinkedIn</option><option value="indeed">Indeed</option></select>
       <input class="champ" type="search" id="f-q" placeholder="Entreprise ou intitulé…" value="${esc(filtreOffres.q)}">
+      <select class="champ" id="f-contrat"><option value="">Tous contrats</option><option value="CDI">CDI</option>
+        <option value="CDD">CDD</option><option value="CDI,CDD">CDI ou CDD</option><option value="?">Contrat non précisé</option></select>
+      <select class="champ" id="f-zone"><option value="">Tous lieux</option><option value="dans_zone">Dans ma zone</option>
+        <option value="a_verifier,teletravail">Lieu à vérifier</option><option value="hors_zone">Hors zone</option></select>
       <label class="case"><input type="checkbox" id="f-data" ${filtreOffres.data ? "checked" : ""}> postes data seulement</label>
+      <label class="case" title="Le mieux noté de chaque entreprise ; les autres postes restent listés dans sa ligne">
+        <input type="checkbox" id="f-unique" ${filtreOffres.unParEntreprise ? "checked" : ""}> 1 poste par entreprise</label>
       <span class="compte" id="compte-offres"></span>
     </div><div id="liste-offres" class="chargement">Chargement…</div>`;
   $("#f-source").value = filtreOffres.source;
+  $("#f-contrat").value = filtreOffres.contrat;
+  $("#f-zone").value = filtreOffres.zone;
   $("#f-offres").addEventListener("click", (e) => {
     const b = e.target.closest("[data-statut]");
     if (!b) return;
@@ -253,6 +295,9 @@ async function vueOffres(v) {
   });
   $("#f-source").addEventListener("change", (e) => { filtreOffres.source = e.target.value; chargerOffres(); });
   $("#f-data").addEventListener("change", (e) => { filtreOffres.data = e.target.checked; chargerOffres(); });
+  $("#f-contrat").addEventListener("change", (e) => { filtreOffres.contrat = e.target.value; chargerOffres(); });
+  $("#f-zone").addEventListener("change", (e) => { filtreOffres.zone = e.target.value; chargerOffres(); });
+  $("#f-unique").addEventListener("change", (e) => { filtreOffres.unParEntreprise = e.target.checked; chargerOffres(); });
   let attente;
   $("#f-q").addEventListener("input", (e) => {
     clearTimeout(attente);
@@ -265,8 +310,20 @@ async function chargerOffres() {
   const zone = $("#liste-offres");
   const p = new URLSearchParams({ statut: filtreOffres.statut, q: filtreOffres.q, source: filtreOffres.source,
     data: filtreOffres.data, limite: 300 });
-  const rows = await api(`offres?${p}`);
-  $("#compte-offres").textContent = `${rows.length} offre(s)${rows.length === 300 ? " (300 premières)" : ""}`;
+  const recues = await api(`offres?${p}`);
+  let rows = recues;
+  if (filtreOffres.contrat) {
+    const voulus = filtreOffres.contrat.split(",");
+    rows = rows.filter((o) => voulus.includes(contratOffre(o) || "?"));
+  }
+  if (filtreOffres.zone) {
+    const voulues = filtreOffres.zone.split(",");
+    rows = rows.filter((o) => voulues.includes(o.lieu_statut || "a_verifier"));
+  }
+  const nb = rows.length;
+  if (filtreOffres.unParEntreprise) rows = unParEntreprise(rows);
+  $("#compte-offres").textContent = `${nb} offre(s)${filtreOffres.unParEntreprise ? ` · ${rows.length} entreprise(s)` : ""}`
+    + `${recues.length === 300 ? " (parmi les 300 plus récentes)" : ""}`;
   zone.className = "";
   if (!rows.length) { zone.innerHTML = '<div class="carte vide">Aucune offre pour ces filtres.</div>'; return; }
   zone.innerHTML = `<div class="table-defile"><table><thead><tr><th>Offre</th><th>Lieu</th><th>Source</th>
@@ -274,11 +331,13 @@ async function chargerOffres() {
       const lien = lienSur(o.lien);
       const recente = o.candidature_recente ? `<span class="etiquette ambre" title="Règle des 3 mois">déjà postulé le ${jour(o.candidature_recente)}</span>` : "";
       return `<tr data-id="${o.id}">
-        <td><strong>${esc(o.intitule)}</strong><div class="sous">${esc(o.entreprise)}${o.contrat ? ` · ${esc(o.contrat)}` : ""}</div>
+        <td><strong>${esc(o.intitule)}</strong><div class="sous">${esc(o.entreprise)}${contratOffre(o) ? ` · ${esc(contratOffre(o))}` : ""}</div>
           <div>${o.fiche_complete ? '<span class="etiquette vert">fiche complète</span> ' : ""}${recente}
           ${o.candidature ? etiquette(o.candidature) : ""}
-          ${o.score_matching != null ? `<span class="etiquette ${teinte(o.score_matching)}">matching ${Math.round(o.score_matching)}/100</span>` : ""}</div></td>
-        <td>${esc(o.ville || "—")}</td><td><span class="etiquette">${esc(o.source)}</span></td>
+          ${o.score_matching != null ? `<span class="etiquette ${teinte(o.score_matching)}">matching ${Math.round(o.score_matching)}/100</span>` : ""}
+          ${(o.autres || []).length ? `<details class="sous"><summary>+${o.autres.length} autre(s) poste(s) chez ${esc(o.entreprise || "cet employeur")}</summary>
+            <ul>${o.autres.map((x) => `<li>${esc(x.intitule)}${x.ville ? ` · ${esc(x.ville)}` : ""}</li>`).join("")}</ul></details>` : ""}</div></td>
+        <td>${esc(o.ville || "—")}<div>${etiquetteLieu(o)}</div></td><td><span class="etiquette">${esc(o.source)}</span></td>
         <td>${etiquette(o.statut_validite)}</td>
         <td class="num">${depuis(o.recu_le)}${o.date_publication ? `<div class="sous">publiée ${jour(o.date_publication)}</div>` : ""}</td>
         <td class="num"><div class="actions">
@@ -459,6 +518,13 @@ function texteRelance(r, ident, langue) {
   const nom = ident.nom || "", tel = ident.telephone ? `\n${ident.telephone}` : "";
   const quand = r.postule_le ? new Date(r.postule_le).toLocaleDateString(langue === "en" ? "en-GB" : "fr-FR") : "";
   const poste = r.poste || r.offre_intitule || "";
+  if (r.motif === "plus_tard") {
+    // Réponse « pas de recrutement pour l'instant » il y a 30 jours : une seule relance.
+    return { objet: `Relance – candidature${r.type === "spontanee" ? " spontanée" : ""}`,
+      corps: `Bonjour,\n\nVous m'aviez indiqué il y a un mois ne pas avoir de besoin de recrutement pour le moment. `
+        + `Je me permets de revenir vers vous : la situation a-t-elle évolué ? Je reste très intéressé à l'idée de rejoindre `
+        + `${r.entreprise || "votre équipe"} et serais ravi d'en discuter avec vous.\n\nBien cordialement,\n${nom}${tel}` };
+  }
   if (langue === "en") {
     const objet = `Follow-up – application${poste ? ` for the ${poste} position` : ""}`;
     const corps = r.numero === 1
@@ -805,13 +871,19 @@ async function vueSpontanees(v) {
     lm && `<button class="bouton petit" data-telecharger="documents/${lm.id}/fichier">Lettre</button>`].filter(Boolean).join(" ");
   const brouillons = rows.filter((r) => r.statut === "brouillon"), autres = rows.filter((r) => r.statut !== "brouillon");
   v.innerHTML = `<div class="entete"><div><h1>Candidatures spontanées.</h1>
-      <p>L'outil trouve l'adresse de recrutement publique de l'entreprise et rédige le mail ; c'est toi qui l'envoies
-      depuis ta messagerie, en joignant ton CV et ta lettre. Au plus 5 brouillons par jour, jamais deux fois la même entreprise en 90 jours.</p></div></div>
+      <p>L'outil trouve l'adresse de recrutement que l'entreprise publie elle-même et rédige le mail (vision de l'entreprise,
+      CV + LM joints, lien du portfolio). Au plus 5 par jour, jamais deux fois la même entreprise en 90 jours.
+      Réponses : renvoi vers leur site = on n'insiste pas ; « écrivez à X » = mail prêt pour X, à valider ;
+      « pas pour l'instant » = une seule relance 30 jours plus tard.</p></div></div>
     <div class="carte"><h3>Envoi depuis Gmail</h3>${env.autorise
       ? `<p class="note">Compte autorisé : <strong>${esc(env.adresse)}</strong> · ${env.envoyes_aujourdhui}/${env.plafond} envoi(s) aujourd'hui.
           Activé, chaque brouillon gagne un bouton « Envoyer depuis Gmail » : rien ne part sans ton clic.</p>
         <label class="actions"><input type="checkbox" id="envoi-actif" ${env.actif ? "checked" : ""}>
-          <span>${env.actif ? "Activé : l'agent peut envoyer à ton nom quand tu cliques" : "Désactivé : tu envoies depuis ta messagerie"}</span></label>`
+          <span>${env.actif ? "Activé : l'agent peut envoyer à ton nom quand tu cliques" : "Désactivé : tu envoies depuis ta messagerie"}</span></label>
+        <label class="actions"><input type="checkbox" id="spont-auto" ${env.spontanees_auto ? "checked" : ""}>
+          <span><strong>Envoi automatique des spontanées</strong> — ${env.spontanees_auto
+            ? `activé : chaque mail sûr part tout seul (${env.spontanees_auto_aujourdhui ?? 0}/${env.plafond_spontanees_auto ?? 5} aujourd'hui). Décoche pour tout arrêter.`
+            : "coupé : rien ne part sans ton clic."}</span></label>`
       : `<p class="note">Pas encore autorisé. Sur le PC, lance <code>python -m app.envoi --autoriser</code> et choisis
           le compte de ton CV : seul le droit d'<em>envoyer</em> est demandé, la lecture reste en lecture seule.</p>`}</div>
     <div class="carte section"><h3>Préparer une spontanée</h3>
@@ -823,6 +895,7 @@ async function vueSpontanees(v) {
         <div class="actions"><button class="bouton principal">Préparer le mail</button></div></form></div>
     <div class="section">${brouillons.length ? brouillons.map((r) => `<div class="carte" data-id="${r.id}">
         <h3>${esc(r.entreprise)} <span class="note">→ ${esc(r.destinataire)}</span></h3>
+        ${r.a_valider ? `<p><span class="etiquette ambre">à valider</span> ${esc(r.a_valider)}</p>` : ""}
         <p class="note">Adresse trouvée sur ${lienSur(r.source_url) ? `<a href="${lienSur(r.source_url)}" target="_blank" rel="noopener">${esc(r.source_url)}</a>` : esc(r.source_url || "—")}
           · préparé ${depuis(r.cree_le)}${r.verification && !r.verification.ok ? " · un paragraphe retiré par le garde-fou" : ""}
           ${r.verification?.adresse_generique ? '<br><span class="etiquette ambre">adresse générale</span> aucune adresse de recrutement publiée : le mail demande de transmettre au service RH.' : ""}</p>
@@ -852,6 +925,15 @@ async function vueSpontanees(v) {
     const maj = () => { const m = valeurs(carte);
       a.href = `mailto:${encodeURIComponent(r.destinataire)}?subject=${encodeURIComponent(m.objet)}&body=${encodeURIComponent(m.corps)}`; };
     maj(); carte.addEventListener("input", maj);
+  });
+  $("#spont-auto")?.addEventListener("change", async (e) => {
+    const oui = e.target.checked;
+    if (oui && !confirm("Activer l'envoi automatique ? Chaque spontanée sûre partira à ton nom, avec ton CV, ta LM et ton portfolio (5 par jour au plus).")) {
+      e.target.checked = false; return;
+    }
+    try { await envoyer("envoi", "PUT", { actif: oui, cle: "spontanees_auto" });
+      toast(oui ? "Spontanées automatiques activées." : "Spontanées automatiques arrêtées."); router(); }
+    catch (err) { toast(err.message); e.target.checked = !oui; }
   });
   $("#envoi-actif")?.addEventListener("change", async (e) => {
     try { await envoyer("envoi", "PUT", { actif: e.target.checked }); toast(e.target.checked ? "Envoi depuis Gmail activé." : "Envoi désactivé."); router(); }
@@ -1183,7 +1265,11 @@ async function vueVeille(v) {
         <label>Postes recherchés (séparés par des virgules)<textarea class="champ" name="postes" style="min-height:70px">${esc(c.postes.join(", "))}</textarea></label>
         <div class="ligne"><label>Contrats à EXCLURE (jamais proposés ni envoyés)<input class="champ" name="contrats_exclus" placeholder="stage, alternance, freelance, interim" value="${esc(c.contrats_exclus.join(", "))}"></label>
           <label>Niveaux exclus<input class="champ" name="niveaux_exclus" value="${esc(c.niveaux_exclus.join(", "))}"></label></div>
-        <label>Lieux acceptés (lieu inconnu = accepté)<textarea class="champ" name="lieux" style="min-height:70px">${esc(c.lieux.join(", "))}</textarea></label>
+        <div class="ligne"><label>Ta ville (point de départ, juste la commune)<input class="champ" name="zone_ville" placeholder="ex. Boulogne-Billancourt" value="${esc(c.zone_ville || "")}"></label>
+          <label>Rayon (km, à vol d'oiseau)<input class="champ" type="number" min="0" max="500" name="zone_rayon_km" value="${esc(c.zone_rayon_km || "")}"></label></div>
+        <p class="note">Ville + rayon remplis : seules les offres dans le rayon sont gardées. Lieu absent, vague (« Île-de-France ») ou télétravail
+          complet : offre proposée avec « lieu à vérifier », jamais envoyée automatiquement. Vide : la liste de lieux ci-dessous s'applique.</p>
+        <label>Lieux acceptés sans rayon (lieu inconnu = à vérifier)<textarea class="champ" name="lieux" style="min-height:70px">${esc(c.lieux.join(", "))}</textarea></label>
         <div class="ligne"><label>Seuil de qualification (/100)<input class="champ" type="number" min="50" max="100" name="fabrication" value="${s.fabrication}"></label>
           <label>Dossiers par jour (max)<input class="champ" type="number" min="1" max="50" name="dossiers_par_jour" value="${s.dossiers_par_jour}"></label></div>
         <label>Matchings Gemini par passage (quota)<input class="champ" type="number" min="0" max="100" name="matchings_par_passage" value="${s.matchings_par_passage}"></label>
@@ -1193,7 +1279,8 @@ async function vueVeille(v) {
     e.preventDefault();
     const f = Object.fromEntries(new FormData(e.target));
     await envoyer("parametres", "PUT", {
-      criteres: { postes: liste(f.postes), contrats_exclus: liste(f.contrats_exclus), niveaux_exclus: liste(f.niveaux_exclus), lieux: liste(f.lieux) },
+      criteres: { postes: liste(f.postes), contrats_exclus: liste(f.contrats_exclus), niveaux_exclus: liste(f.niveaux_exclus), lieux: liste(f.lieux),
+        zone_ville: f.zone_ville.trim(), zone_rayon_km: Math.max(0, +f.zone_rayon_km || 0) },
       seuils: { fabrication: +f.fabrication, dossiers_par_jour: +f.dossiers_par_jour, matchings_par_passage: +f.matchings_par_passage },
     });
     toast("Critères enregistrés : ils s'appliquent au prochain passage.");
