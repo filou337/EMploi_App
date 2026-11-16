@@ -154,6 +154,7 @@ def etat(conn: psycopg.Connection) -> dict:
         "spontanees_auto": bool(e.get("spontanees_auto")),
         "spontanees_auto_aujourdhui": jour["spontanees_auto"],
         "plafond_spontanees_auto": int(s.get("spontanees_auto_par_jour", 5)),
+        "copie_moi": bool(e.get("copie_moi", True)),
     }
 
 
@@ -173,11 +174,19 @@ def activer(conn: psycopg.Connection, actif: bool, cle: str = "actif") -> dict:
 
 # --- Construction et envoi -----------------------------------------------------------------------
 def construire(
-    expediteur: str, nom: str, destinataire: str, objet: str, corps: str, pieces: list[dict]
+    expediteur: str,
+    nom: str,
+    destinataire: str,
+    objet: str,
+    corps: str,
+    pieces: list[dict],
+    copie_cachee: str | None = None,
 ) -> EmailMessage:
     m = EmailMessage()
     m["From"] = formataddr((nom, expediteur)) if nom else expediteur
     m["To"] = destinataire
+    if copie_cachee:
+        m["Bcc"] = copie_cachee  # Gmail le retire avant de remettre le mail au destinataire
     m["Subject"] = objet
     m.set_content(corps)
     m.add_alternative(en_html(corps), subtype="html")  # liens cliquables (portfolio, LinkedIn)
@@ -275,18 +284,30 @@ def _envoyer(
     e = _controles(conn, destinataire, auto, type_)
     if not objet.strip() or not corps.strip():
         raise EnvoiImpossible("Objet ou message vide.")
+    # Preuve : tout envoi AUTOMATIQUE t'arrive aussi en copie cachée (réglage envoi.copie_moi).
+    copie = (
+        e["adresse"]
+        if auto
+        and e.get("copie_moi", True)
+        and e["adresse"]
+        and e["adresse"].lower() != destinataire.strip().lower()
+        else None
+    )
+    noms = [p["nom_fichier"] for p in pieces]
     try:
         with conn.transaction():
             envoi_id = conn.execute(
-                "INSERT INTO envois (type, ref_id, numero, destinataire, objet, automatique)"
-                " VALUES (%s, %s, %s, %s, %s, %s) RETURNING id",
-                (type_, ref_id, numero, destinataire, objet, auto),
+                "INSERT INTO envois (type, ref_id, numero, destinataire, objet, automatique,"
+                " pieces, copie_a) VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
+                (type_, ref_id, numero, destinataire, objet, auto, noms, copie),
             ).fetchone()["id"]
     except psycopg.errors.UniqueViolation as err:
         raise EnvoiImpossible("Ce mail a déjà été envoyé (ou est en cours d'envoi).") from err
     conn.commit()  # trace avant l'appel à Gmail : un double clic ne peut pas envoyer deux fois
     ident = identite.lire(conn)
-    message = construire(e["adresse"], ident.get("nom", ""), destinataire, objet, corps, pieces)
+    message = construire(
+        e["adresse"], ident.get("nom", ""), destinataire, objet, corps, pieces, copie
+    )
     corps_api = {"raw": base64.urlsafe_b64encode(message.as_bytes()).decode()}
     if fil:
         corps_api["threadId"] = fil

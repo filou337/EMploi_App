@@ -320,3 +320,35 @@ def test_postes_ouverts_sans_candidature_ciblee(base):
     finally:
         c.execute("DELETE FROM offres WHERE entreprise_id = %s", (eid,))
         c.commit()
+
+
+# --- Preuves d'envoi ------------------------------------------------------------------------
+def test_copie_cachee_journal_et_recap(base):
+    from app import recap
+
+    c, eid, faux = base
+    sid = _brouillon(c, eid)
+    assert agent.envoyer_auto(c, sid) is None
+    brut = base64.urlsafe_b64decode(faux.envoyes[-1]["raw"]).decode(errors="ignore")
+    assert f"Bcc: {MOI}" in brut  # copie cachée vers ta boîte
+    e = c.execute(
+        "SELECT * FROM v_envois WHERE id = (SELECT max(id) FROM envois"
+        " WHERE type = 'spontanee' AND ref_id = %s)",
+        (sid,),
+    ).fetchone()
+    assert e["copie_a"] == MOI and e["pieces"] == ["CV_test.pdf"]
+    assert e["entreprise"] == "Acme Spont Test" and e["gmail_message_id"]
+    objet, texte = recap.contenu(c, datetime.now(recap.PARIS).date())
+    assert "envoi(s)" in objet
+    assert (
+        "Spontanée · Acme Spont Test" in texte and "rh@acme-spont.fr (auto, copie reçue)" in texte
+    )
+
+
+def test_pas_de_copie_pour_un_envoi_par_toi(base):
+    c, eid, faux = base
+    criteres.ecrire(c, "envoi", {"autorise_pour": MOI, "actif": True})
+    sid = _brouillon(c, eid)
+    envoi.envoyer_spontanee(c, sid, "Objet", "Corps")
+    c.commit()
+    assert "Bcc:" not in base64.urlsafe_b64decode(faux.envoyes[-1]["raw"]).decode(errors="ignore")

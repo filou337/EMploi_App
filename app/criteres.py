@@ -103,7 +103,14 @@ DEFAUTS: dict = {
     # Envoi en 1 clic depuis Gmail : désactivé tant que tu ne l'actives pas (onglet Spontanées).
     # relances_auto : relances dues envoyées sans ton clic (activé à ta demande du 14/11/2026).
     # spontanees_auto : spontanées envoyées sans ton clic (coupé tant que tu ne l'actives pas).
-    "envoi": {"actif": False, "auto": False, "relances_auto": True, "spontanees_auto": False},
+    # copie_moi : chaque envoi automatique t'arrive en copie cachée (preuve d'envoi).
+    "envoi": {
+        "actif": False,
+        "auto": False,
+        "relances_auto": True,
+        "spontanees_auto": False,
+        "copie_moi": True,
+    },
     # Coordonnées imprimées sur les CV et LM générés (jamais envoyées au LLM).
     "identite": {},
     # Réponses des formulaires de candidature (salaire, disponibilité…) : jamais imprimées

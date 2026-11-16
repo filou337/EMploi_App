@@ -18,7 +18,7 @@ from datetime import UTC, datetime
 
 from psycopg.types.json import Jsonb
 
-from app import activite, pertinence, rapport
+from app import activite, pertinence, rapport, recap
 from app.agents import candidature_auto, matching, relances, suivi, veille
 from app.collecte.importer import importer_boite
 from app.config import boites_gmail, chemin_token
@@ -42,6 +42,7 @@ ETAPES = (
     "candidatures_auto",
     "spontanees",
     "rapport",
+    "recap",
 )
 
 
@@ -83,6 +84,11 @@ def _rapport() -> dict:
         return rapport.generer(conn)  # produit seulement s'il est dû (tous les 3 jours)
 
 
+def _recap() -> dict:
+    with connexion() as conn:
+        return recap.executer(conn)  # une fois par jour, au premier passage après 20 h
+
+
 def _validite() -> dict:
     with connexion() as conn:
         pertinence.marquer(conn)
@@ -111,6 +117,7 @@ AGENTS = {
     "candidatures_auto": _candidatures_auto,
     "spontanees": _spontanees,
     "rapport": _rapport,
+    "recap": _recap,
 }
 JOURNALISES_ICI = {
     "relances",
@@ -120,6 +127,7 @@ JOURNALISES_ICI = {
     "candidatures_auto",
     "spontanees",
     "rapport",
+    "recap",
 }  # collecte et fiches écrivent leur propre bilan
 
 

@@ -993,8 +993,9 @@ function blocKit(r, pieces) {
 }
 
 async function vueEnvoisAuto(v) {
-  const [rows, env, params, offres] = await Promise.all([api("candidatures-auto"), api("envoi").catch(() => ({})), api("parametres"),
-    api(`offres?${new URLSearchParams({ statut: "a_verifier,valide", data: true, limite: 300 })}`).catch(() => [])]);
+  const [rows, env, params, offres, envois] = await Promise.all([api("candidatures-auto"), api("envoi").catch(() => ({})), api("parametres"),
+    api(`offres?${new URLSearchParams({ statut: "a_verifier,valide", data: true, limite: 300 })}`).catch(() => []),
+    api("envois?jours=30").catch(() => [])]);
   const seuil = (params.seuils || {}).fabrication ?? 85, mini = (params.seuils || {}).envoi_auto_min ?? 50;
   const hautJour = (params.seuils || {}).envois_auto_haut_par_jour ?? 5, form = params.formulaire || {};
   const cote = rows.filter((r) => r.statut === "mise_de_cote"), autres = rows.filter((r) => !["mise_de_cote", "pret"].includes(r.statut));
@@ -1038,6 +1039,22 @@ async function vueEnvoisAuto(v) {
         <div class="actions section">
           <button class="bouton principal" data-a="envoyer">Envoyer maintenant</button>
           <button class="bouton" data-a="bloquer">Ne pas envoyer</button></div></div>`).join("") : ""}</div>
+    <div class="carte section"><h3>Envoyées : preuves d'envoi (30 derniers jours)</h3>
+      <p class="note">Chaque mail parti depuis ta boîte Gmail, avec l'heure, le destinataire et les pièces jointes. Les envois automatiques
+        t'arrivent aussi en <strong>copie cachée</strong>, et un récap part chaque soir vers 20 h.</p>
+      ${envois.length ? `<ul class="fil">${envois.slice(0, 60).map((e) => {
+        const gmail = e.gmail_message_id && env.adresse
+          ? `https://mail.google.com/mail/u/?authuser=${encodeURIComponent(env.adresse)}#all/${encodeURIComponent(e.gmail_message_id)}` : "";
+        const type = { candidature: "candidature", spontanee: "spontanée", relance: "relance" }[e.type] || e.type;
+        return `<li><div>
+          <span class="etiquette ${e.statut === "envoye" ? "vert" : e.statut === "erreur" ? "rouge" : "ambre"}">${e.statut === "envoye" ? "✓ envoyée" : e.statut === "erreur" ? "erreur" : "en cours"}</span>
+          <span class="etiquette">${esc(type)}</span>${e.automatique ? '<span class="etiquette sarcelle">auto</span>' : ""}
+          <strong>${esc(e.entreprise || "?")}</strong> ${esc(e.poste || "")}
+          <div class="sous">${new Date(e.envoye_le || e.cree_le).toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" })}
+            → ${esc(e.destinataire)} · « ${esc(e.objet)} »${(e.pieces || []).length ? ` · 📎 ${e.pieces.map(esc).join(", ")}` : ""}
+            ${e.copie_a ? " · copie reçue dans ta boîte" : ""}${e.erreur ? ` · ${esc(e.erreur.slice(0, 140))}` : ""}
+            ${gmail ? ` · <a href="${gmail}" target="_blank" rel="noopener noreferrer">Ouvrir dans Gmail ↗</a>` : ""}</div></div></li>`;
+      }).join("")}</ul>` : '<p class="note">Aucun envoi sur les 30 derniers jours.</p>'}</div>
     <div class="carte section" id="postes-auto"><h3>Postes ouverts : lance l'envoi auto</h3>
       <p class="note">Clique « Envoi auto » sur un poste qui t'intéresse : au prochain passage (30 min au plus), l'agent cherche l'annonce complète si besoin,
         prépare CV + LM + mail, puis la candidature rejoint « Prêtes à partir » (départ ${delai} h plus tard, bloquable).

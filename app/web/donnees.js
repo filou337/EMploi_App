@@ -111,6 +111,9 @@ const ROUTES = [
     attendreDemande(await deposerDemande("envoyer_mail", { type: "spontanee", id: +m[1], ...corps(o) }))],
   ["POST", /^candidatures\/(\d+)\/envoyer-relance$/, async (m, _q, o) =>
     attendreDemande(await deposerDemande("envoyer_mail", { type: "relance", id: +m[1], ...corps(o) }))],
+  ["GET", /^envois$/, async (_m, q) => verifier(await sb.from("v_envois").select("*")
+    .gte("cree_le", new Date(Date.now() - (+q.get("jours") || 30) * 864e5).toISOString())
+    .order("cree_le", { ascending: false }).limit(300))],
   ["GET", /^candidatures-auto$/, async () => verifier(await sb.from("v_candidatures_auto").select("*")
     .order("cree_le", { ascending: false }).limit(100))],
   ["POST", /^candidatures-auto\/(\d+)\/envoyer$/, async (m, _q, o) =>

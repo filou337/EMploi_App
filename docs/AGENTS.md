@@ -17,6 +17,7 @@ ce qu'il fait dans le **Salon** de l'appli (fil en direct et journal des passage
 | 7 | **Candidatures** | `app/agents/candidature_auto.py` | **Oui : mails de candidature** |
 | 8 | Spontanées | `app/spontanees/agent.py` | Oui si `envoi.spontanees_auto` (5 par jour), sinon par toi |
 | 9 | Rapport | `app/rapport.py` | Non (lu dans l'appli) |
+| 10 | Récap du jour | `app/recap.py` | Mail à toi-même, vers 20 h |
 
 ## 1. Recherche
 Lit les alertes emploi reçues dans Gmail (2 derniers jours), extrait chaque offre (intitulé,
@@ -117,3 +118,13 @@ garde-fou ou une redirection attend ton clic (`spontanees.a_valider`).
 ## 9. Rapport
 Tous les 3 jours : offres repérées, candidatures envoyées, réponses, relances dues, dossiers
 prêts, taux de réponse. Lisible dans l'appli et sur le téléphone.
+
+## 10. Récap du jour et preuves d'envoi
+- **Copie cachée** : chaque mail envoyé automatiquement (candidature, spontanée, relance) part
+  avec ta propre adresse en Cci (`envoi.copie_moi`, activé) : tu reçois exactement le mail
+  envoyé, pièces jointes comprises. Le recruteur ne le voit pas.
+- **Journal** : onglet « Envois auto », encadré « Envoyées » (vue `v_envois`) : heure,
+  destinataire, objet, pièces jointes, et « Ouvrir dans Gmail » sur le mail réellement parti.
+- **Récap** : au premier passage après 20 h (heure de Paris), un mail à toi-même liste ce qui
+  est parti dans la journée, ce qui est prêt à partir, ce qui a été mis de côté, tes demandes en
+  attente et les erreurs d'envoi. Une fois par jour (`envoi.recap_le`).

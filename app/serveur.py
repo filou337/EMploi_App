@@ -856,6 +856,16 @@ def interrupteur_envoi(i: Interrupteur, conn: Conn = Depends(db)):
     return _envoi(lambda e: e.activer(conn, i.actif, i.cle))
 
 
+@app.get("/api/envois")
+def journal_envois(jours: int = Query(30, le=365), conn: Conn = Depends(db)):
+    """Preuves d'envoi : chaque mail parti (ou en erreur), avec son identifiant Gmail."""
+    return conn.execute(
+        "SELECT * FROM v_envois WHERE cree_le > now() - make_interval(days => %s)"
+        " ORDER BY cree_le DESC LIMIT 300",
+        (jours,),
+    ).fetchall()
+
+
 @app.get("/api/candidatures-auto")
 def candidatures_auto(conn: Conn = Depends(db)):
     return conn.execute(
