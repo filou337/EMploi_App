@@ -403,13 +403,17 @@ def executer(conn: psycopg.Connection) -> dict:
     if not llm.disponible():
         return {**bilan, "note": "clé Gemini absente"}
     # 1. Préparer de nouveaux dossiers (quelques-uns par passage : Gemini et Chrome sont lents).
-    for o in candidates(
-        conn, float(s.get("envoi_auto_min", 50)), int(s.get("candidatures_auto_par_passage", 3))
-    ):
+    #    Les offres écartées (stage, employeur contacté il y a moins de 3 mois, hors zone) ne
+    #    comptent pas dans ce quota : sinon elles bloqueraient les suivantes à chaque passage.
+    par_passage, tentees = int(s.get("candidatures_auto_par_passage", 3)), 0
+    for o in candidates(conn, float(s.get("envoi_auto_min", 50)), 200):
         recente = o["entreprise_id"] and candidature_recente(conn, o["entreprise_id"])
         statut_lieu, _km = criteres.statut_lieu(o.get("ville"), p["criteres"], conn)
         if recente or hors_cdi_cdd(o) or statut_lieu == criteres.HORS_ZONE:
             continue
+        if tentees >= par_passage:
+            break
+        tentees += 1
         aid = activite.debut(
             "candidatures_auto",
             "Prépare CV + LM + mail",

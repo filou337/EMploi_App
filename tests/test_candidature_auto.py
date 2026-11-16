@@ -363,3 +363,15 @@ def test_delai_avant_depart_puis_envoyer_maintenant_ou_bloquer(base, monkeypatch
     )
     c.commit()
     assert ca.executer(c)["envoyées"] == 0 and len(faux.envoyes) == 1
+
+
+def test_offres_ecartees_ne_bloquent_pas_les_suivantes(base, monkeypatch):
+    c, ids, eid, _faux = _preparer_base(base, monkeypatch)
+    criteres.ecrire(c, "seuils", {**criteres.lire(c)["seuils"], "candidatures_auto_par_passage": 1})
+    for i in range(3):  # trois stages mieux notés, toujours écartés
+        oid = _offre(c, ids, eid, 95 - i, url=f"test:auto:stage{i}")
+        c.execute("UPDATE offres SET intitule = 'Stage - Data Analyst' WHERE id = %s", (oid,))
+    bonne = _offre(c, ids, eid, 60, url="test:auto:bonne")
+    c.commit()
+    assert ca.executer(c)["préparées"] == 1
+    assert bonne in _lignes(c, ids)
