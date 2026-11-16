@@ -977,6 +977,79 @@ const STATUT_AUTO = { pret: ["ambre", "prête (part après le délai)"], envoyee
   mise_de_cote: ["sarcelle", "mise de côté pour toi"], ignoree: ["", "ignorée"], erreur: ["rouge", "erreur"] };
 
 // Kit formulaire : employeur sans adresse publiée, tout est prêt pour postuler sur son site.
+// Bouton « Remplir » (marque-page) : exécuté sur la page du formulaire de l'employeur, il lit le
+// kit copié par « Postuler sur le site » (presse-papiers) et remplit les champs reconnus.
+// Autonome (sérialisé en javascript:) : ne contient aucune donnée, n'envoie rien, ne soumet rien.
+function remplirKit() {
+  const RG = [
+    ["Prénom", /pr[ée]nom|first.?name|given.?name|fname/i],
+    ["Nom", /^(?!.*pr[ée]nom)(?=.*(\bnom\b|last.?name|family.?name|surname|lname))/i],
+    ["Mail", /e-?mail|courriel/i],
+    ["Téléphone", /t[ée]l[ée]phone|phone|mobile|\btel\b/i],
+    ["LinkedIn", /linked.?in/i],
+    ["Portfolio / site", /portfolio|website|site (web|perso|internet)|personal site|github|\burl\b/i],
+    ["Ville", /\bville\b|\bcity\b|location|localisation|lieu de r[ée]sidence/i],
+    ["Salaire souhaité (brut annuel)", /salaire|salary|r[ée]mun[ée]ration|compensation|pr[ée]tention/i],
+    ["Disponibilité", /disponibilit|availability|start date|date de d[ée]but|notice|pr[ée]avis/i],
+    ["Autorisation de travail", /autoris|work (permit|authori)|visa|sponsor/i],
+    ["Comment avez-vous connu l'offre ?", /connu|how did you (hear|find)|\bsource\b|referr?al/i],
+  ];
+  const MOTIV = /motivation|cover|lettre|message|why|pourquoi|additional|compl[ée]ment|comment/i;
+  const NOM_COMPLET = /full.?name|nom complet|your name|votre nom|^\s*(name|nom)\s*\*?\s*$/i;
+  const banniere = (texte, ok) => {
+    let b = document.getElementById("emploi-app-remplir");
+    if (!b) { b = document.createElement("div"); b.id = "emploi-app-remplir"; document.body.appendChild(b); }
+    Object.assign(b.style, { position: "fixed", top: "12px", right: "12px", zIndex: "2147483647", padding: "10px 14px",
+      borderRadius: "8px", font: "14px/1.4 sans-serif", boxShadow: "0 2px 10px rgba(0,0,0,.3)", maxWidth: "340px",
+      background: ok ? "#0f766e" : "#b91c1c", color: "#fff" });
+    b.textContent = texte;
+    setTimeout(() => b.remove(), 9000);
+  };
+  const libelleDe = (el) => {
+    const parts = [el.name, el.id, el.placeholder, el.getAttribute("aria-label"), el.getAttribute("autocomplete")];
+    if (el.labels) for (const l of el.labels) parts.push(l.textContent);
+    (el.getAttribute("aria-labelledby") || "").split(/\s+/).forEach((i) => { const x = i && el.ownerDocument.getElementById(i); if (x) parts.push(x.textContent); });
+    return parts.filter(Boolean).join(" ").replace(/\s+/g, " ");
+  };
+  const poser = (el, v) => {
+    const vue = el.ownerDocument.defaultView || window;
+    const proto = el.tagName === "TEXTAREA" ? vue.HTMLTextAreaElement.prototype : vue.HTMLInputElement.prototype;
+    Object.getOwnPropertyDescriptor(proto, "value").set.call(el, v);  // compatible React / Vue
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+    el.style.outline = "2px solid #0f766e";
+  };
+  const remplir = (kit) => {
+    const val = {};
+    for (const c of kit.champs || []) if (c.valeur && !/à renseigner/.test(c.valeur)) val[c.libelle] = c.valeur;
+    const docs = [document];
+    document.querySelectorAll("iframe").forEach((f) => { try { if (f.contentDocument) docs.push(f.contentDocument); } catch (e) { /* autre domaine */ } });
+    let n = 0;
+    for (const d of docs) for (const el of d.querySelectorAll("input, textarea")) {
+      const t = (el.type || "").toLowerCase();
+      if (["hidden", "file", "checkbox", "radio", "submit", "button", "password", "search"].includes(t) || el.disabled || el.readOnly || el.value) continue;
+      const l = libelleDe(el);
+      let v = t === "email" ? val["Mail"] : t === "tel" ? val["Téléphone"] : null;
+      if (!v) for (const [k, rg] of RG) if (val[k] && rg.test(l)) { v = val[k]; break; }
+      if (!v && NOM_COMPLET.test(l) && val["Prénom"]) v = [val["Prénom"], val["Nom"]].filter(Boolean).join(" ");
+      if (!v && el.tagName === "TEXTAREA" && kit.motivation && MOTIV.test(l)) v = kit.motivation;
+      if (v) { poser(el, v); n++; }
+    }
+    banniere(n ? `EMploi_App : ${n} champ(s) rempli(s). Joins ton CV et ta LM, vérifie, puis envoie.`
+      : "EMploi_App : aucun champ reconnu ici. Ouvre d'abord le formulaire (bouton « Postuler »).", n > 0);
+  };
+  const lire = (txt) => {
+    let kit = null;
+    try { kit = JSON.parse(txt); } catch (e) { kit = null; }
+    if (kit && kit.emploi_app_kit) remplir(kit);
+    else banniere("EMploi_App : copie d'abord le kit (bouton « Postuler sur le site » de l'onglet Envois auto).", false);
+  };
+  const demander = () => lire(window.prompt("Colle ici le kit EMploi_App (Ctrl+V) :") || "");
+  if (navigator.clipboard && navigator.clipboard.readText) navigator.clipboard.readText().then(lire, demander);
+  else demander();
+}
+const MARQUE_PAGE_REMPLIR = `javascript:${encodeURIComponent(`(${remplirKit.toString()})()`)}`;
+
 function blocKit(r, pieces) {
   const kit = r.kit;
   if (!kit) return "";
@@ -998,7 +1071,9 @@ async function vueEnvoisAuto(v) {
     api("envois?jours=30").catch(() => [])]);
   const seuil = (params.seuils || {}).fabrication ?? 85, mini = (params.seuils || {}).envoi_auto_min ?? 50;
   const hautJour = (params.seuils || {}).envois_auto_haut_par_jour ?? 5, form = params.formulaire || {};
-  const cote = rows.filter((r) => r.statut === "mise_de_cote"), autres = rows.filter((r) => !["mise_de_cote", "pret"].includes(r.statut));
+  const surSite = (r) => r.statut === "mise_de_cote" && (r.kit || /aucun contact publié/.test(r.motif || ""));
+  const aPostuler = rows.filter(surSite);
+  const cote = rows.filter((r) => r.statut === "mise_de_cote" && !surSite(r)), autres = rows.filter((r) => !["mise_de_cote", "pret"].includes(r.statut));
   const pretes = rows.filter((r) => r.statut === "pret" && r.destinataire);
   const delai = (params.seuils || {}).delai_envoi_auto_heures ?? 2;
   const depart = (r) => {
@@ -1039,6 +1114,23 @@ async function vueEnvoisAuto(v) {
         <div class="actions section">
           <button class="bouton principal" data-a="envoyer">Envoyer maintenant</button>
           <button class="bouton" data-a="bloquer">Ne pas envoyer</button></div></div>`).join("") : ""}</div>
+    ${aPostuler.length ? `<div class="carte section"><h3>À postuler sur leur site (${aPostuler.length})</h3>
+      <p class="note">Ces employeurs ne publient pas d'adresse : il faut leur formulaire (protégé par CAPTCHA, impossible à envoyer seul).
+        1. « Postuler sur le site » copie ton kit et ouvre le formulaire · 2. clique ton marque-page <strong>Remplir</strong> ·
+        3. joins le CV et la LM ci-dessous · 4. envoie, puis « J'ai postulé ».</p>
+      <details class="section"><summary><strong>Installer le bouton « Remplir »</strong> (une fois, sur ton PC)</summary>
+        <p class="note section">Affiche la barre de favoris de Chrome (Ctrl+Maj+B), puis <strong>glisse</strong> ce bouton dedans :
+          <a class="bouton principal" href="${MARQUE_PAGE_REMPLIR}" title="Glisse-moi dans ta barre de favoris" onclick="event.preventDefault(); return false;">Remplir</a>
+          <br>Il ne contient aucune donnée : il lit le kit que tu viens de copier, remplit les champs reconnus et ne soumet jamais rien.
+          La première fois, Chrome te demande d'autoriser la lecture du presse-papiers.</p></details>
+      ${aPostuler.map((r) => `<div class="carte section" data-id="${r.id}">
+        <h3>${esc(r.entreprise || "?")} — ${esc(r.intitule)} <span class="note">${r.kit?.plateforme ? esc(r.kit.plateforme) : ""}${r.score != null ? ` · ${Math.round(r.score)}/100` : ""}</span></h3>
+        <p class="note">préparé ${depuis(r.cree_le)}${r.cv_origine ? " · CV d'origine joint" : ""}</p>
+        <div class="actions">${lienSur(r.kit?.lien || r.url_fiche || r.url_cle) ? '<button class="bouton principal" data-a="postuler-site">Postuler sur le site</button>' : ""}
+          ${pieces(r)}
+          <button class="bouton" data-a="postule-kit" data-offre="${r.offre_id}">J'ai postulé</button>
+          <button class="bouton petit" data-a="ignorer">Ignorer</button></div>
+        ${r.kit ? `<details class="section"><summary>Voir le kit (champs à copier un par un)</summary>${blocKit(r, "")}</details>` : ""}</div>`).join("")}</div>` : ""}
     <div class="carte section"><h3>Envoyées : preuves d'envoi (30 derniers jours)</h3>
       <p class="note">Chaque mail parti depuis ta boîte Gmail, avec l'heure, le destinataire et les pièces jointes. Les envois automatiques
         t'arrivent aussi en <strong>copie cachée</strong>, et un récap part chaque soir vers 20 h.</p>
@@ -1163,6 +1255,15 @@ async function vueEnvoisAuto(v) {
     const carte = b.closest("[data-id]"), id = carte.dataset.id, a = b.dataset.a;
     try {
       if (a === "copier-kit") { await navigator.clipboard.writeText(b.dataset.valeur); toast("Copié."); return; }
+      if (a === "postuler-site") {
+        const r = rows.find((x) => x.id === +id), lien = lienSur(r.kit?.lien || r.url_fiche || r.url_cle);
+        try {
+          await navigator.clipboard.writeText(JSON.stringify({ emploi_app_kit: 1, champs: r.kit?.champs || [], motivation: r.kit?.motivation || "" }));
+          toast("Kit copié : sur le formulaire, clique ton marque-page « Remplir ».");
+        } catch (err) { toast("Copie impossible : utilise « Voir le kit »."); }
+        if (lien) window.open(lien, "_blank", "noopener");
+        return;
+      }
       if (a === "postule-kit") {
         b.disabled = true; await envoyer(`offres/${b.dataset.offre}/postule`, "POST");
         toast("Candidature ajoutée au suivi (relance prévue)."); router(); return;

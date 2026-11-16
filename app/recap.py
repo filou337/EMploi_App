@@ -43,6 +43,11 @@ def contenu(conn: psycopg.Connection, jour: date) -> tuple[str, str]:
         " WHERE statut = 'mise_de_cote' AND cree_le >= %s AND cree_le < %s ORDER BY cree_le",
         (debut, fin),
     ).fetchall()
+    sur_site = conn.execute(
+        "SELECT entreprise, intitule, coalesce(kit->>'lien', url_fiche, url_cle) AS lien, cree_le"
+        " FROM v_candidatures_auto WHERE statut = 'mise_de_cote'"
+        " AND (kit IS NOT NULL OR motif LIKE 'aucun contact publié%%') ORDER BY cree_le"
+    ).fetchall()
     attente = conn.execute(
         "SELECT count(*) AS n, count(*) FILTER (WHERE NOT fiche_complete"
         " AND envoi_auto_note LIKE 'annonce complète introuvable%%') AS a_coller"
@@ -69,6 +74,20 @@ def contenu(conn: psycopg.Connection, jour: date) -> tuple[str, str]:
             f" → {p['destinataire']}"
             for p in pretes
         ]
+    if sur_site:
+        lignes += [
+            "",
+            (
+                f"À POSTULER SUR LEUR SITE ({len(sur_site)}) — onglet Envois auto, bouton"
+                " « Postuler sur le site » puis ton marque-page « Remplir »"
+            ),
+        ]
+        lignes += [
+            f"- {x['entreprise'] or '?'} — {x['intitule']} (depuis le {x['cree_le']:%d/%m})"
+            + (f" : {x['lien']}" if x["lien"] else "")
+            for x in sur_site
+        ]
+    cote = [c for c in cote if not (c["motif"] or "").startswith("aucun contact publié")]
     if cote:
         lignes += ["", f"MISES DE CÔTÉ POUR TOI AUJOURD'HUI ({len(cote)})"]
         lignes += [f"- {c['entreprise'] or '?'} — {c['intitule']} : {c['motif']}" for c in cote]
@@ -86,8 +105,10 @@ def contenu(conn: psycopg.Connection, jour: date) -> tuple[str, str]:
             for e in erreurs
         ]
     lignes += ["", "Chaque envoi automatique t'arrive aussi en copie cachée dans ta boîte."]
-    objet = f"Récap du {jour:%d/%m} : {len(partis)} envoi(s)" + (
-        f", {len(erreurs)} erreur(s)" if erreurs else ""
+    objet = (
+        f"Récap du {jour:%d/%m} : {len(partis)} envoi(s)"
+        + (f", {len(sur_site)} à postuler sur leur site" if sur_site else "")
+        + (f", {len(erreurs)} erreur(s)" if erreurs else "")
     )
     return objet, "\n".join(lignes)
 

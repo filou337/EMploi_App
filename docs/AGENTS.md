@@ -125,6 +125,11 @@ prêts, taux de réponse. Lisible dans l'appli et sur le téléphone.
   envoyé, pièces jointes comprises. Le recruteur ne le voit pas.
 - **Journal** : onglet « Envois auto », encadré « Envoyées » (vue `v_envois`) : heure,
   destinataire, objet, pièces jointes, et « Ouvrir dans Gmail » sur le mail réellement parti.
+- **Formulaires des sites** (employeur sans adresse publiée) : jamais soumis par l'appli (CAPTCHA,
+  comptes à créer). Liste « À postuler sur leur site » en tête de l'onglet Envois auto :
+  « Postuler sur le site » copie le kit et ouvre le formulaire, le marque-page **Remplir**
+  (bookmarklet sans données) remplit les champs reconnus ; tu joins CV/LM et tu envoies.
+  Rappel dans le récap du soir tant que ce n'est pas fait.
 - **Récap** : au premier passage après 20 h (heure de Paris), un mail à toi-même liste ce qui
   est parti dans la journée, ce qui est prêt à partir, ce qui a été mis de côté, tes demandes en
   attente et les erreurs d'envoi. Une fois par jour (`envoi.recap_le`).
