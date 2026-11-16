@@ -280,3 +280,43 @@ def test_pas_maintenant_une_seule_relance_a_j30(base, monkeypatch):
     brut = base64.urlsafe_b64decode(faux.envoyes[-1]["raw"]).decode(errors="ignore")
     assert "marie.durand@acme-spont.fr" in brut
     assert c.execute("SELECT 1 FROM v_relances WHERE id = %s", (cid,)).fetchone() is None
+
+
+# --- Postes ouverts cités dans la spontanée -------------------------------------------------
+def test_intitule_propre_et_phrase_postes():
+    assert agent.intitule_propre("Data Analyst (H/F) - CDI") == "Data Analyst"
+    assert agent.intitule_propre("Consultant BI - CDI - Paris") == "Consultant BI"
+    un = agent.phrase_postes([{"intitule": "Data Analyst (H/F)"}, {"intitule": "Data Analyst F/H"}])
+    assert "pour le poste « Data Analyst » :" in un
+    deux = agent.phrase_postes([{"intitule": "Data Analyst"}, {"intitule": "BI Engineer"}])
+    assert "pour les postes « Data Analyst » et « BI Engineer »" in deux
+    assert agent.phrase_postes([]) is None
+    res = {"salutation": "Madame, Monsieur,", "paragraphes": ["P."], "formule": "Cordialement,"}
+    corps = agent.assembler(res, {"nom": "C"}, postes=[{"intitule": "Data Analyst"}])
+    assert corps.startswith("Madame, Monsieur,\n\nJ'ai vu que vous recrutez")
+
+
+def test_postes_ouverts_sans_candidature_ciblee(base):
+    c, eid, _ = base
+
+    def offre(intitule, score=None, ville="Paris"):
+        return c.execute(
+            "INSERT INTO offres (url_cle, cle_floue, source, intitule, entreprise_id, ville, score,"
+            " statut_validite, pertinente) VALUES (%s, 'x', 'manuelle', %s, %s, %s, %s,"
+            " 'a_verifier', TRUE) RETURNING id",
+            (f"test:spont:{intitule}:{score}", intitule, eid, ville, score),
+        ).fetchone()["id"]
+
+    sans_note = offre("Data Analyst (H/F) - CDI")
+    faible = offre("Data Engineer CDD", score=40)
+    offre("Analytics Engineer", score=70)  # aura sa candidature ciblée
+    offre("Stage - Data Analyst")  # jamais un stage
+    offre("Data Analyst", ville="Lyon")  # hors zone
+    c.commit()
+    try:
+        ids = {p["id"] for p in agent.postes_ouverts(c, eid)}
+        assert ids == {sans_note, faible}
+        assert agent.cibles(c) is not None
+    finally:
+        c.execute("DELETE FROM offres WHERE entreprise_id = %s", (eid,))
+        c.commit()

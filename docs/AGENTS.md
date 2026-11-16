@@ -89,7 +89,9 @@ d'après leur site carrières, leurs offres et leurs adresses mail, seulement si
 leur nom. Trouve l'adresse que l'entreprise publie elle-même : RH (recrutement@, rh@…), à défaut
 un recruteur nommé sur sa page carrières, en dernier secours contact@ (le mail demande alors de
 transmettre). Jamais d'adresse devinée. Rédige le mail (vision de l'entreprise, compétences du
-CV, garde-fou de véracité) ; la phrase finale annonce CV + LM joints et le lien du portfolio
+CV, garde-fou de véracité) ; priorité aux employeurs qui ont un poste data CDI/CDD ouvert sans
+candidature ciblée (offre non notée ou notée sous `envoi_auto_min`) : le mail cite ce poste
+(« J'ai vu que vous recrutez actuellement pour le poste « … » »), intitulé recopié par le code ; la phrase finale annonce CV + LM joints et le lien du portfolio
 (cliquable : le mail part aussi en HTML). 5 par jour au plus.
 
 **Envoi automatique** (interrupteur de l'onglet Spontanées, coupé par défaut) : chaque mail sûr

@@ -896,6 +896,7 @@ async function vueSpontanees(v) {
     <div class="section">${brouillons.length ? brouillons.map((r) => `<div class="carte" data-id="${r.id}">
         <h3>${esc(r.entreprise)} <span class="note">→ ${esc(r.destinataire)}</span></h3>
         ${r.a_valider ? `<p><span class="etiquette ambre">à valider</span> ${esc(r.a_valider)}</p>` : ""}
+        ${(r.verification?.postes || []).length ? `<p class="note">Poste(s) ouvert(s) cité(s) : ${r.verification.postes.map((p) => `« ${esc(p.intitule)} »`).join(", ")}</p>` : ""}
         <p class="note">Adresse trouvée sur ${lienSur(r.source_url) ? `<a href="${lienSur(r.source_url)}" target="_blank" rel="noopener">${esc(r.source_url)}</a>` : esc(r.source_url || "—")}
           · préparé ${depuis(r.cree_le)}${r.verification && !r.verification.ok ? " · un paragraphe retiré par le garde-fou" : ""}
           ${r.verification?.adresse_generique ? '<br><span class="etiquette ambre">adresse générale</span> aucune adresse de recrutement publiée : le mail demande de transmettre au service RH.' : ""}</p>
