@@ -144,6 +144,14 @@ const ROUTES = [
     verifier(await sb.rpc("coller_fiche", { p_offre: +m[1], p_texte: b.texte, p_url: b.url || null }));
     return { ok: true };
   }],
+  ["POST", /^offres\/(\d+)\/envoi-auto$/, async (m) => {
+    verifier(await sb.from("offres").update({ envoi_auto_demande_le: new Date().toISOString(), envoi_auto_note: null }).eq("id", m[1]));
+    return { ok: true };
+  }],
+  ["DELETE", /^offres\/(\d+)\/envoi-auto$/, async (m) => {
+    verifier(await sb.from("offres").update({ envoi_auto_demande_le: null, envoi_auto_note: null }).eq("id", m[1]));
+    return { ok: true };
+  }],
   ["POST", /^offres\/(\d+)\/postule$/, async (m) => ({ candidature_id: verifier(await sb.rpc("j_ai_postule", { p_offre: +m[1] })) })],
   ["POST", /^offres\/(\d+)\/etape$/, async (m, _q, o) => {
     const r = verifier(await sb.rpc("changer_etape", { p_offre: +m[1], p_etape: corps(o).etape || null }));

@@ -375,3 +375,40 @@ def test_offres_ecartees_ne_bloquent_pas_les_suivantes(base, monkeypatch):
     c.commit()
     assert ca.executer(c)["préparées"] == 1
     assert bonne in _lignes(c, ids)
+
+
+def test_envoi_auto_demande_par_toi(base, monkeypatch):
+    c, ids, eid, _faux = _preparer_base(base, monkeypatch, delai=2)
+    criteres.ecrire(c, "seuils", {**criteres.lire(c)["seuils"], "candidatures_auto_par_passage": 5})
+    # Poste non noté, lieu inconnu : ta demande passe outre note et « lieu à vérifier ».
+    sans_note = _offre(c, ids, eid, None, url="test:auto:demande")
+    c.execute("UPDATE offres SET ville = NULL WHERE id = %s", (sans_note,))
+    # Poste connu par un extrait, annonce introuvable : on te demande de la coller.
+    extrait = _offre(c, ids, eid, None, url="test:auto:extrait")
+    c.execute("UPDATE offres SET fiche_complete = FALSE, texte = NULL WHERE id = %s", (extrait,))
+    c.execute(
+        "UPDATE offres SET envoi_auto_demande_le = now() WHERE id = ANY(%s)",
+        ([sans_note, extrait],),
+    )
+    c.commit()
+    monkeypatch.setattr("app.fiches.recherche.chercher_fiche", lambda conn, oid: False)
+    bilan = ca.executer(c)
+    assert bilan["préparées"] == 1 and bilan["envoyées"] == 0
+    assert _lignes(c, ids)[sans_note]["statut"] == "pret"  # part après le délai
+    notes = {
+        r["id"]: (r["envoi_auto_demande_le"] is not None, r["envoi_auto_note"])
+        for r in c.execute(
+            "SELECT id, envoi_auto_demande_le, envoi_auto_note FROM offres WHERE id = ANY(%s)",
+            ([sans_note, extrait],),
+        )
+    }
+    assert notes[sans_note] == (False, "dossier préparé")
+    assert notes[extrait][0] and notes[extrait][1].startswith(ca.FICHE_INTROUVABLE)
+    # La fiche collée débloque la demande au passage suivant.
+    c.execute(
+        "UPDATE offres SET fiche_complete = TRUE, texte = %s WHERE id = %s",
+        ("Missions SQL et Power BI. " * 10, extrait),
+    )
+    c.commit()
+    assert ca.executer(c)["préparées"] == 1
+    assert extrait in _lignes(c, ids)

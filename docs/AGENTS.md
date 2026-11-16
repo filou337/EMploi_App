@@ -68,6 +68,12 @@ de la meilleure à la moins bonne :
 3. **Contact** : adresse publiée par l'employeur (fiche de l'offre, contact connu, page
    recrutement de son site). **Jamais d'adresse devinée.**
 4. **Mail** d'accompagnement court, jovial et pro, avec le lien du portfolio ; CV et LM joints.
+**Envoi auto demandé par toi** : dans l'onglet « Envois auto », la liste des postes ouverts
+(hors zone, stages et postes déjà candidatés exclus) a un bouton « Envoi auto » par poste. Ta
+demande passe en premier au passage suivant ; elle passe outre la note minimale et « lieu à
+vérifier », jamais la règle des 3 mois ni l'exclusion des stages. Poste connu par un extrait :
+l'annonce complète est cherchée chez l'employeur ; introuvable, tu la colles (« Coller la fiche »).
+
 5. **Envoi automatique** depuis ta boîte Gmail (interrupteur « Envoi automatique ») :
    - chaque candidature prête attend `delai_envoi_auto_heures` (2 h) : dans l'onglet
      « Envois auto », « Envoyer maintenant » ou « Ne pas envoyer » ; sans action, elle part

@@ -155,6 +155,8 @@ def offres(
         SELECT o.id, o.intitule, o.ville, o.contrat, o.source, o.statut_validite, o.fiche_complete,
                o.url_cle, o.url_fiche, o.recu_le, o.date_publication, o.note_validite, o.score,
                o.classe, o.entreprise_id, o.lieu_statut, o.distance_km,
+               o.envoi_auto_demande_le, o.envoi_auto_note,
+               (SELECT a.statut FROM candidatures_auto a WHERE a.offre_id = o.id) AS auto_statut,
                e.nom_affiche AS entreprise, e.ats,
                (SELECT c.statut FROM candidatures c WHERE c.offre_id = o.id) AS candidature,
                (SELECT a.score_matching FROM analyses a WHERE a.offre_id = o.id
@@ -201,6 +203,27 @@ def offre(offre_id: int, conn: Conn = Depends(db)):
 class Fiche(BaseModel):
     texte: str = Field(min_length=200, max_length=50_000)
     url: str | None = None
+
+
+@app.post("/api/offres/{offre_id}/envoi-auto")
+def demander_envoi_auto(offre_id: int, conn: Conn = Depends(db)):
+    """Bouton « Envoi auto » : le poste est préparé au prochain passage, puis part après le délai."""
+    n = conn.execute(
+        "UPDATE offres SET envoi_auto_demande_le = now(), envoi_auto_note = NULL WHERE id = %s",
+        (offre_id,),
+    ).rowcount
+    if not n:
+        raise HTTPException(404, "Offre introuvable")
+    return {"ok": True}
+
+
+@app.delete("/api/offres/{offre_id}/envoi-auto")
+def annuler_envoi_auto(offre_id: int, conn: Conn = Depends(db)):
+    conn.execute(
+        "UPDATE offres SET envoi_auto_demande_le = NULL, envoi_auto_note = NULL WHERE id = %s",
+        (offre_id,),
+    )
+    return {"ok": True}
 
 
 @app.post("/api/offres/{offre_id}/fiche")

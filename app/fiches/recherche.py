@@ -447,3 +447,28 @@ def main() -> None:
             executer(args.limite, args.entreprise, args.refaire)
         finally:
             verrou.execute("SELECT pg_advisory_unlock(%s)", (VERROU,))
+
+
+def chercher_fiche(conn, offre_id: int) -> bool:
+    """Cherche tout de suite l'annonce complète d'UNE offre (chez son employeur) ; True si
+    elle est trouvée. Utilisé quand tu demandes l'envoi auto d'un poste connu par un extrait."""
+    o = conn.execute(
+        "SELECT id, intitule, ville, recu_le, entreprise_id FROM offres WHERE id = %s",
+        (offre_id,),
+    ).fetchone()
+    if o is None or o["entreprise_id"] is None:
+        return False
+    ent = conn.execute(
+        "SELECT id, nom_norm, nom_affiche, ats, ats_slug, ats_verifie_le, site_carrieres, site_web"
+        " FROM entreprises WHERE id = %s",
+        (o["entreprise_id"],),
+    ).fetchone()
+    ent = dict(ent)
+    ent["sites"] = sites_employeur(conn, ent)
+    try:
+        res = traiter_entreprise(ent, [dict(o)])
+    except Exception:  # noqa: BLE001 — site injoignable : on te demandera la fiche
+        return False
+    _enregistrer(conn, res)
+    row = conn.execute("SELECT fiche_complete FROM offres WHERE id = %s", (offre_id,)).fetchone()
+    return bool(row and row["fiche_complete"])

@@ -448,7 +448,7 @@ function afficherMatching(id, analyse) {
   };
 }
 
-function collerFiche(id) {
+function collerFiche(id, _bouton, apres = chargerOffres) {
   const corps = ouvrir("Coller la fiche de poste", `<form class="formulaire" id="form-fiche">
     <p class="note">Copie le texte complet de l'offre depuis le site de l'employeur ou de la plateforme, et colle-le ici.
     L'offre sera marquée « fiche complète » et pourra atteindre 85 au scoring.</p>
@@ -461,7 +461,7 @@ function collerFiche(id) {
     const f = new FormData(e.target);
     try {
       await envoyer(`offres/${id}/fiche`, "POST", { texte: f.get("texte"), url: f.get("url") || null });
-      fermer(); toast("Fiche enregistrée."); chargerOffres();
+      fermer(); toast("Fiche enregistrée."); apres();
     } catch (err) { $("#err-fiche").textContent = err.message; }
   });
 }
@@ -993,7 +993,8 @@ function blocKit(r, pieces) {
 }
 
 async function vueEnvoisAuto(v) {
-  const [rows, env, params] = await Promise.all([api("candidatures-auto"), api("envoi").catch(() => ({})), api("parametres")]);
+  const [rows, env, params, offres] = await Promise.all([api("candidatures-auto"), api("envoi").catch(() => ({})), api("parametres"),
+    api(`offres?${new URLSearchParams({ statut: "a_verifier,valide", data: true, limite: 300 })}`).catch(() => [])]);
   const seuil = (params.seuils || {}).fabrication ?? 85, mini = (params.seuils || {}).envoi_auto_min ?? 50;
   const hautJour = (params.seuils || {}).envois_auto_haut_par_jour ?? 5, form = params.formulaire || {};
   const cote = rows.filter((r) => r.statut === "mise_de_cote"), autres = rows.filter((r) => !["mise_de_cote", "pret"].includes(r.statut));
@@ -1037,6 +1038,19 @@ async function vueEnvoisAuto(v) {
         <div class="actions section">
           <button class="bouton principal" data-a="envoyer">Envoyer maintenant</button>
           <button class="bouton" data-a="bloquer">Ne pas envoyer</button></div></div>`).join("") : ""}</div>
+    <div class="carte section" id="postes-auto"><h3>Postes ouverts : lance l'envoi auto</h3>
+      <p class="note">Clique « Envoi auto » sur un poste qui t'intéresse : au prochain passage (30 min au plus), l'agent cherche l'annonce complète si besoin,
+        prépare CV + LM + mail, puis la candidature rejoint « Prêtes à partir » (départ ${delai} h plus tard, bloquable).
+        Ton clic passe outre la note minimale et « lieu à vérifier » ; jamais deux fois le même employeur en 3 mois.
+        ${env.auto ? "" : '<br><strong>Active d\'abord l\'envoi automatique ci-dessus : sinon tes demandes attendent.</strong>'}</p>
+      <div class="filtres">
+        <select class="champ" id="pa-contrat"><option value="">Tous contrats</option><option value="CDI">CDI</option><option value="CDD">CDD</option>
+          <option value="?">Contrat non précisé</option></select>
+        <select class="champ" id="pa-lieu"><option value="">Tous lieux (hors zone exclus)</option><option value="dans_zone">Dans ma zone</option>
+          <option value="a_verifier,teletravail">Lieu à vérifier</option></select>
+        <label class="case"><input type="checkbox" id="pa-unique"> 1 poste par entreprise</label>
+        <span class="compte" id="pa-compte"></span></div>
+      <div id="pa-liste"></div></div>
     <div class="section">${cote.length ? `<h3>Mises de côté pour toi (${cote.length})</h3>` + cote.map((r) => `<div class="carte" data-id="${r.id}">
         <h3>${esc(r.entreprise || "?")} — ${esc(r.intitule)} <span class="note">${r.score != null ? Math.round(r.score) + "/100" : ""}</span></h3>
         <p class="note">${esc(r.motif || "")}${r.cv_origine ? ' · <span class="etiquette">CV d\'origine joint</span>' : ""}${r.destinataire ? ` · contact : <strong>${esc(r.destinataire)}</strong>` : ""}
@@ -1054,6 +1068,62 @@ async function vueEnvoisAuto(v) {
       <strong>${esc(r.entreprise || "?")}</strong> ${esc(r.intitule)} <span class="note">${r.score != null ? Math.round(r.score) + "/100" : ""}</span>
       <div class="sous">${jour(r.envoyee_le || r.cree_le)}${r.destinataire ? ` · ${esc(r.destinataire)}` : ""}${r.cv_origine ? " · CV d'origine" : ""}${r.erreur ? ` · ${esc(r.erreur.slice(0, 120))}` : ""}</div></div></li>`).join("")}</ul></div>` : ""}`;
   const valeurs = (carte) => ({ objet: $("[data-champ=objet]", carte).value, corps: $("[data-champ=corps]", carte).value });
+  // --- Postes ouverts : bouton « Envoi auto » par poste ---
+  const JAMAIS_AUTO = /\b(stage|stagiaire|intern|internship|alternance|alternant|apprenti\w*|freelance|int[ée]rim\w*)\b/i;
+  const ouverts = offres.filter((o) => o.lieu_statut !== "hors_zone" && !o.candidature && !o.auto_statut
+    && !JAMAIS_AUTO.test(`${o.contrat || ""} ${o.intitule || ""}`));
+  const afficherPostes = () => {
+    const fc = $("#pa-contrat").value, fl = $("#pa-lieu").value;
+    let l = ouverts.filter((o) => (!fc || (contratOffre(o) || "?") === fc)
+      && (!fl || fl.split(",").includes(o.lieu_statut || "a_verifier")));
+    l.sort((a, b) => Boolean(b.envoi_auto_demande_le) - Boolean(a.envoi_auto_demande_le)
+      || (b.score ?? -1) - (a.score ?? -1) || Date.parse(b.recu_le) - Date.parse(a.recu_le));
+    if ($("#pa-unique").checked) l = unParEntreprise(l);
+    $("#pa-compte").textContent = `${l.length} poste(s)`;
+    const bouton = (o) => {
+      if (o.candidature_recente) return `<span class="etiquette ambre">déjà postulé le ${jour(o.candidature_recente)}</span>`;
+      if (o.envoi_auto_demande_le) {
+        const introuvable = !o.fiche_complete && (o.envoi_auto_note || "").startsWith("annonce complète introuvable");
+        return (introuvable
+          ? '<span class="etiquette ambre">annonce introuvable</span> <button class="bouton petit principal" data-pa="fiche">Coller la fiche</button>'
+          : '<span class="etiquette sarcelle">⏳ demandé : préparé au prochain passage</span>')
+          + ' <button class="bouton petit" data-pa="annuler">Annuler</button>';
+      }
+      return '<button class="bouton petit principal" data-pa="demander">Envoi auto</button>';
+    };
+    $("#pa-liste").innerHTML = l.length ? `<ul class="liste">${l.slice(0, 80).map((o) => `<li data-offre="${o.id}"><span>
+        <strong>${esc(o.intitule)}</strong> <span class="note">${esc(o.entreprise || "?")}${contratOffre(o) ? ` · ${esc(contratOffre(o))}` : ""}
+          · ${esc(o.ville || "lieu ?")}</span> ${etiquetteLieu(o)}
+        ${o.score != null ? `<span class="etiquette ${teinte(o.score)}">${Math.round(o.score)}/100</span>` : '<span class="etiquette">non noté</span>'}
+        ${o.fiche_complete ? "" : '<span class="etiquette">extrait</span>'}
+        ${lienSur(o.lien) ? `<a class="note" href="${lienSur(o.lien)}" target="_blank" rel="noopener noreferrer">voir ↗</a>` : ""}
+        ${o.envoi_auto_note && !o.envoi_auto_demande_le ? `<div class="sous">${esc(o.envoi_auto_note)}</div>` : ""}
+        ${(o.autres || []).length ? `<div class="sous">+${o.autres.length} autre(s) poste(s) chez cet employeur</div>` : ""}</span>
+        <span class="actions">${bouton(o)}</span></li>`).join("")}</ul>
+        ${l.length > 80 ? '<p class="note">80 premiers affichés : utilise les filtres pour voir les autres.</p>' : ""}`
+      : '<p class="note">Aucun poste ouvert pour ces filtres.</p>';
+  };
+  ["#pa-contrat", "#pa-lieu", "#pa-unique"].forEach((sel) => $(sel).addEventListener("change", afficherPostes));
+  afficherPostes();
+  $("#pa-liste").addEventListener("click", async (e) => {
+    const b = e.target.closest("[data-pa]");
+    if (!b) return;
+    const id = b.closest("[data-offre]").dataset.offre, o = ouverts.find((x) => x.id === +id);
+    try {
+      if (b.dataset.pa === "fiche") { collerFiche(id, b, () => router()); return; }
+      b.disabled = true;
+      if (b.dataset.pa === "demander") {
+        await envoyer(`offres/${id}/envoi-auto`, "POST");
+        Object.assign(o, { envoi_auto_demande_le: new Date().toISOString(), envoi_auto_note: null });
+        toast("Demandé : dossier préparé au prochain passage, puis départ après le délai.");
+      } else {
+        await envoyer(`offres/${id}/envoi-auto`, "DELETE");
+        Object.assign(o, { envoi_auto_demande_le: null, envoi_auto_note: null });
+        toast("Demande annulée.");
+      }
+      afficherPostes();
+    } catch (err) { toast(err.message); b.disabled = false; }
+  });
   v.querySelectorAll("[data-mailto]").forEach((a) => {
     const carte = a.closest("[data-id]");
     const maj = () => { const m = valeurs(carte);
@@ -1072,7 +1142,7 @@ async function vueEnvoisAuto(v) {
   });
   v.onclick = async (e) => {
     const b = e.target.closest("[data-a]");
-    if (!b) return;
+    if (!b || !b.closest("[data-id]")) return;
     const carte = b.closest("[data-id]"), id = carte.dataset.id, a = b.dataset.a;
     try {
       if (a === "copier-kit") { await navigator.clipboard.writeText(b.dataset.valeur); toast("Copié."); return; }

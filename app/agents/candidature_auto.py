@@ -360,7 +360,7 @@ def preparer(
     motif = motif or lieu
     if (
         motif is None
-        and float(o["score"]) >= seuil
+        and float(o["score"] or 0) >= seuil
         and hauts_du_jour(conn, seuil, ca_id) >= plafond_haut
     ):
         motif = (
@@ -392,6 +392,103 @@ def preparer(
     return {"id": ca_id, "motif": motif, "cv_origine": cv_origine}
 
 
+FICHE_INTROUVABLE = "annonce complète introuvable"
+
+
+def demandes(conn: psycopg.Connection) -> list[dict]:
+    """Postes pour lesquels tu as cliqué « Envoi auto » (les plus anciennes demandes d'abord)."""
+    return conn.execute(
+        """
+        SELECT o.id, o.intitule, o.texte, o.score, o.url_fiche, o.url_cle, o.entreprise_id, o.contrat,
+               o.ville, o.fiche_complete, o.statut_validite, o.envoi_auto_note,
+               e.nom_affiche AS entreprise, e.site_web, e.ats
+        FROM offres o LEFT JOIN entreprises e ON e.id = o.entreprise_id
+        WHERE o.envoi_auto_demande_le IS NOT NULL
+          AND NOT EXISTS (SELECT 1 FROM candidatures c WHERE c.offre_id = o.id)
+          AND NOT EXISTS (SELECT 1 FROM candidatures_auto a WHERE a.offre_id = o.id)
+        ORDER BY o.envoi_auto_demande_le
+        """
+    ).fetchall()
+
+
+def _noter_demande(conn: psycopg.Connection, offre_id: int, note: str, fin: bool) -> None:
+    conn.execute(
+        "UPDATE offres SET envoi_auto_note = %s,"
+        " envoi_auto_demande_le = CASE WHEN %s THEN NULL ELSE envoi_auto_demande_le END"
+        " WHERE id = %s",
+        (note, fin, offre_id),
+    )
+    conn.commit()
+
+
+def demande_prete(conn: psycopg.Connection, o: dict) -> bool:
+    """Garde-fous d'une demande ; cherche l'annonce complète si on n'a qu'un extrait.
+    Ta demande passe outre la note minimale et « lieu à vérifier », pas le reste."""
+    from app.fiches.recherche import chercher_fiche
+
+    recente = o["entreprise_id"] and candidature_recente(conn, o["entreprise_id"])
+    if recente:
+        _noter_demande(
+            conn,
+            o["id"],
+            f"employeur déjà contacté le {recente:%d/%m/%Y} (moins de 3 mois) : pas d'envoi",
+            True,
+        )
+        return False
+    if hors_cdi_cdd(o):
+        _noter_demande(
+            conn, o["id"], "stage, alternance, freelance ou intérim : jamais d'envoi auto", True
+        )
+        return False
+    if o["fiche_complete"]:
+        return True
+    if (o["envoi_auto_note"] or "").startswith(FICHE_INTROUVABLE):
+        return False  # on attend que tu colles la fiche
+    trouvee = chercher_fiche(conn, o["id"])
+    conn.commit()
+    if trouvee:
+        o.update(
+            conn.execute(
+                "SELECT texte, fiche_complete, url_fiche FROM offres WHERE id = %s", (o["id"],)
+            ).fetchone()
+        )
+        return True
+    statut = conn.execute(
+        "SELECT statut_validite FROM offres WHERE id = %s", (o["id"],)
+    ).fetchone()["statut_validite"]
+    if statut in ("expiree", "ancienne"):
+        _noter_demande(conn, o["id"], "offre expirée chez l'employeur : pas d'envoi", True)
+        return False
+    _noter_demande(
+        conn, o["id"], f"{FICHE_INTROUVABLE} : colle-la (bouton « Coller la fiche »)", False
+    )
+    notifier(
+        conn,
+        "info",
+        f"Envoi auto — {o['entreprise'] or '?'} : annonce à coller",
+        f"{o['intitule']} : l'annonce complète est introuvable. Colle-la dans l'onglet"
+        " « Envois auto » pour que le dossier soit préparé.",
+        o["id"],
+    )
+    conn.commit()
+    return False
+
+
+def _a_preparer(conn: psycopg.Connection, p: dict):
+    """(offre, statut du lieu, demandée par toi ?) : tes demandes d'abord, puis les offres notées.
+    Les offres écartées (stage, employeur contacté il y a moins de 3 mois, hors zone) ne sont
+    pas renvoyées : elles ne comptent pas dans le quota du passage."""
+    for o in demandes(conn):
+        if demande_prete(conn, o):
+            yield o, criteres.DANS_ZONE, True
+    for o in candidates(conn, float(p["seuils"].get("envoi_auto_min", 50)), 200):
+        recente = o["entreprise_id"] and candidature_recente(conn, o["entreprise_id"])
+        statut_lieu, _km = criteres.statut_lieu(o.get("ville"), p["criteres"], conn)
+        if recente or hors_cdi_cdd(o) or statut_lieu == criteres.HORS_ZONE:
+            continue
+        yield o, statut_lieu, False
+
+
 def executer(conn: psycopg.Connection) -> dict:
     p = criteres.lire(conn)
     s = p["seuils"]
@@ -403,14 +500,9 @@ def executer(conn: psycopg.Connection) -> dict:
     if not llm.disponible():
         return {**bilan, "note": "clé Gemini absente"}
     # 1. Préparer de nouveaux dossiers (quelques-uns par passage : Gemini et Chrome sont lents).
-    #    Les offres écartées (stage, employeur contacté il y a moins de 3 mois, hors zone) ne
-    #    comptent pas dans ce quota : sinon elles bloqueraient les suivantes à chaque passage.
+    #    Tes demandes « Envoi auto » passent en premier.
     par_passage, tentees = int(s.get("candidatures_auto_par_passage", 3)), 0
-    for o in candidates(conn, float(s.get("envoi_auto_min", 50)), 200):
-        recente = o["entreprise_id"] and candidature_recente(conn, o["entreprise_id"])
-        statut_lieu, _km = criteres.statut_lieu(o.get("ville"), p["criteres"], conn)
-        if recente or hors_cdi_cdd(o) or statut_lieu == criteres.HORS_ZONE:
-            continue
+    for o, statut_lieu, demandee in _a_preparer(conn, p):
         if tentees >= par_passage:
             break
         tentees += 1
@@ -418,7 +510,7 @@ def executer(conn: psycopg.Connection) -> dict:
             "candidatures_auto",
             "Prépare CV + LM + mail",
             offre_id=o["id"],
-            detail=f"note {float(o['score']):.0f}/100",
+            detail="demandé par toi" if demandee else f"note {float(o['score']):.0f}/100",
         )
         try:
             r = preparer(
@@ -452,6 +544,8 @@ def executer(conn: psycopg.Connection) -> dict:
             bilan["note"] = str(e)
             if isinstance(e, llm.LLMIndisponible) or "Plafond" in str(e):
                 break
+            if demandee:
+                _noter_demande(conn, o["id"], str(e), True)
             continue
         except Exception as e:  # noqa: BLE001 — une offre en échec n'arrête pas les autres
             activite.fin(aid, "Erreur de préparation", f"{type(e).__name__}: {e}", erreur=True)
@@ -461,7 +555,11 @@ def executer(conn: psycopg.Connection) -> dict:
                 (f"{type(e).__name__}: {e}"[:1000], o["id"]),
             )
             conn.commit()
+            if demandee:
+                _noter_demande(conn, o["id"], f"erreur : {type(e).__name__}", True)
             continue
+        if demandee:
+            _noter_demande(conn, o["id"], "dossier préparé", True)
         bilan["préparées"] += 1
         bilan["mises de côté"] += bool(r["motif"])
     # 2. Envoyer les candidatures prêtes dont le délai est passé (tu as pu les bloquer ou les
