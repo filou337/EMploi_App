@@ -973,7 +973,7 @@ async function vueSpontanees(v) {
 }
 
 // --- Candidatures automatiques ------------------------------------------------------------------
-const STATUT_AUTO = { pret: ["ambre", "prête (envoi au prochain passage)"], envoyee: ["vert", "envoyée"],
+const STATUT_AUTO = { pret: ["ambre", "prête (part après le délai)"], envoyee: ["vert", "envoyée"],
   mise_de_cote: ["sarcelle", "mise de côté pour toi"], ignoree: ["", "ignorée"], erreur: ["rouge", "erreur"] };
 
 // Kit formulaire : employeur sans adresse publiée, tout est prêt pour postuler sur son site.
@@ -996,7 +996,14 @@ async function vueEnvoisAuto(v) {
   const [rows, env, params] = await Promise.all([api("candidatures-auto"), api("envoi").catch(() => ({})), api("parametres")]);
   const seuil = (params.seuils || {}).fabrication ?? 85, mini = (params.seuils || {}).envoi_auto_min ?? 50;
   const hautJour = (params.seuils || {}).envois_auto_haut_par_jour ?? 5, form = params.formulaire || {};
-  const cote = rows.filter((r) => r.statut === "mise_de_cote"), autres = rows.filter((r) => r.statut !== "mise_de_cote");
+  const cote = rows.filter((r) => r.statut === "mise_de_cote"), autres = rows.filter((r) => !["mise_de_cote", "pret"].includes(r.statut));
+  const pretes = rows.filter((r) => r.statut === "pret" && r.destinataire);
+  const delai = (params.seuils || {}).delai_envoi_auto_heures ?? 2;
+  const depart = (r) => {
+    if (!r.depart_le || new Date(r.depart_le) <= new Date()) return "part au prochain passage (≤ 30 min)";
+    return `part toute seule à ${new Date(r.depart_le).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}`
+      + (new Date(r.depart_le).toDateString() !== new Date().toDateString() ? ` le ${jour(r.depart_le)}` : "");
+  };
   const pieces = (r) => (r.fichiers || []).filter((f) => f.format === "pdf")
     .map((f) => `<button class="bouton petit" data-telecharger="fichiers/${f.id}">${f.type === "cv" ? "CV" : "LM"} (PDF)</button>`).join(" ");
   v.innerHTML = `<div class="entete"><div><h1>Candidatures automatiques.</h1>
@@ -1017,6 +1024,19 @@ async function vueEnvoisAuto(v) {
         <div class="ligne"><label>Autorisation de travail<input class="champ" name="autorisation" value="${esc(form.autorisation || "")}" placeholder="ex. autorisé(e) à travailler en France"></label>
           <label>Comment as-tu connu l'offre ?<input class="champ" name="source" value="${esc(form.source || "")}" placeholder="Site carrières"></label></div>
         <div class="actions"><button class="bouton principal">Enregistrer</button></div></form></details>
+    <div class="section">${pretes.length ? `<h3>Prêtes à partir (${pretes.length})</h3>
+      <p class="note">Chaque nouvelle candidature attend ${delai} h avant de partir : envoie-la tout de suite ou bloque-la. Sans action, elle part seule.</p>`
+      + pretes.map((r) => `<div class="carte" data-id="${r.id}">
+        <h3>${esc(r.entreprise || "?")} — ${esc(r.intitule)} <span class="note">${r.score != null ? Math.round(r.score) + "/100" : ""}</span></h3>
+        <p><span class="etiquette ambre">⏳ ${esc(depart(r))}</span> <span class="note">à <strong>${esc(r.destinataire)}</strong>${r.cv_origine ? " · CV d'origine joint" : ""}
+          ${lienSur(r.url_fiche || r.url_cle) ? ` · <a href="${lienSur(r.url_fiche || r.url_cle)}" target="_blank" rel="noopener">voir l'offre</a>` : ""}</span></p>
+        <details><summary>Relire le mail${pieces(r) ? " et les pièces jointes" : ""}</summary>
+          <div class="formulaire section"><label>Objet<input class="champ" data-champ="objet" value="${esc(r.objet || "")}"></label>
+            <label>Message<textarea class="champ" data-champ="corps" rows="12">${esc(r.corps || "")}</textarea></label></div>
+          <p class="actions">${pieces(r)}</p></details>
+        <div class="actions section">
+          <button class="bouton principal" data-a="envoyer">Envoyer maintenant</button>
+          <button class="bouton" data-a="bloquer">Ne pas envoyer</button></div></div>`).join("") : ""}</div>
     <div class="section">${cote.length ? `<h3>Mises de côté pour toi (${cote.length})</h3>` + cote.map((r) => `<div class="carte" data-id="${r.id}">
         <h3>${esc(r.entreprise || "?")} — ${esc(r.intitule)} <span class="note">${r.score != null ? Math.round(r.score) + "/100" : ""}</span></h3>
         <p class="note">${esc(r.motif || "")}${r.cv_origine ? ' · <span class="etiquette">CV d\'origine joint</span>' : ""}${r.destinataire ? ` · contact : <strong>${esc(r.destinataire)}</strong>` : ""}
@@ -1065,6 +1085,9 @@ async function vueEnvoisAuto(v) {
         if (!confirm("Envoyer cette candidature maintenant, avec le CV et la lettre adaptés ?")) return;
         b.disabled = true; toast("Envoi en cours…");
         await envoyer(`candidatures-auto/${id}/envoyer`, "POST", valeurs(carte)); toast("Candidature envoyée et ajoutée au suivi.");
+      } else if (a === "bloquer") {
+        if (!confirm("Bloquer cette candidature ? Elle ne partira pas.")) return;
+        await envoyer(`candidatures-auto/${id}/ignorer`, "POST"); toast("Bloquée : elle ne partira pas.");
       } else { await envoyer(`candidatures-auto/${id}/ignorer`, "POST"); toast("Ignorée."); }
       router();
     } catch (err) { toast(err.message); b.disabled = false; }

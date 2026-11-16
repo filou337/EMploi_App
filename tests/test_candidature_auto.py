@@ -135,6 +135,7 @@ def test_envoi_sous_le_seuil_et_mise_de_cote_au_dessus(base, monkeypatch):
             "candidatures_auto_par_passage": 10,
             "envoi_auto_min": 50,
             "envois_auto_haut_par_jour": 0,
+            "delai_envoi_auto_heures": 0,
         },
     )
     ids["entreprise"] = eid = c.execute(
@@ -222,7 +223,7 @@ def test_civilite_jamais_devinee():
     assert ca.salutation_sure("", offre) == "Madame, Monsieur,"
 
 
-def _preparer_base(base, monkeypatch, haut_par_jour=5, **dossier):
+def _preparer_base(base, monkeypatch, haut_par_jour=5, delai=0, **dossier):
     c, ids = base
     faux = FauxGmail()
     monkeypatch.setattr(envoi, "_service", lambda: faux)
@@ -249,6 +250,7 @@ def _preparer_base(base, monkeypatch, haut_par_jour=5, **dossier):
             "candidatures_auto_par_passage": 10,
             "envoi_auto_min": 50,
             "envois_auto_haut_par_jour": haut_par_jour,
+            "delai_envoi_auto_heures": delai,
         },
     )
     ids["entreprise"] = eid = c.execute(
@@ -332,3 +334,32 @@ def test_motif_lieu():
     assert ca.motif_lieu("dans_zone", "Paris") is None
     assert "lieu à vérifier" in ca.motif_lieu("a_verifier", None)
     assert "télétravail" in ca.motif_lieu("teletravail", "Remote")
+
+
+def test_delai_avant_depart_puis_envoyer_maintenant_ou_bloquer(base, monkeypatch):
+    c, ids, eid, faux = _preparer_base(base, monkeypatch, delai=2)
+    a = _offre(c, ids, eid, 70, url="test:auto:delai:a")
+    b = _offre(c, ids, eid, 65, url="test:auto:delai:b")
+    c.commit()
+    bilan = ca.executer(c)
+    assert bilan["préparées"] == 2 and bilan["envoyées"] == 0  # elles attendent 2 h
+    lignes = _lignes(c, ids)
+    assert lignes[a]["statut"] == lignes[b]["statut"] == "pret"
+    depart = c.execute(
+        "SELECT depart_le - now() AS reste FROM candidatures_auto WHERE offre_id = %s", (a,)
+    ).fetchone()["reste"]
+    assert 1.9 * 3600 < depart.total_seconds() <= 2 * 3600
+    # « Envoyer maintenant » : part tout de suite, comptée comme automatique.
+    aid = c.execute("SELECT id FROM candidatures_auto WHERE offre_id = %s", (a,)).fetchone()["id"]
+    envoi.envoyer_candidature(c, aid)
+    c.commit()
+    assert len(faux.envoyes) == 1 and envoi.etat(c)["auto_aujourdhui"] >= 1
+    # « Ne pas envoyer » : bloquée, même après le délai.
+    c.execute("UPDATE candidatures_auto SET statut = 'ignoree' WHERE offre_id = %s", (b,))
+    c.execute(
+        "UPDATE candidatures_auto SET depart_le = now() - interval '1 minute'"
+        " WHERE offre_id = ANY(%s)",
+        (ids["offres"],),
+    )
+    c.commit()
+    assert ca.executer(c)["envoyées"] == 0 and len(faux.envoyes) == 1

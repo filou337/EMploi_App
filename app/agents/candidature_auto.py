@@ -8,7 +8,9 @@ Pour chaque offre au fiche complète, valide, notée par la grille V2 et sans co
    sinon adresse de recrutement de son site (jamais d'adresse devinée) ;
 4. mail d'accompagnement court, jovial et pro (Gemini, garde-fou de véracité), avec le lien du
    portfolio ; CV et LM en pièces jointes ;
-5. envoi automatique (interrupteur `envoi.auto`, `envois_auto_par_jour` = 10 au plus) :
+5. envoi automatique (interrupteur `envoi.auto`, `envois_auto_par_jour` = 10 au plus), après
+   un délai de `delai_envoi_auto_heures` (2 h) pendant lequel tu peux l'envoyer tout de suite
+   ou la bloquer (onglet « Envois auto ») :
    - score < seuil (85) : toujours ;
    - score ≥ seuil : `envois_auto_haut_par_jour` (5) par jour, les suivants restent pour toi ;
    - CV adapté moins bon que l'original (matching, compatibilité ATS, phrase retirée du CV) :
@@ -318,13 +320,15 @@ def preparer(
     seuil: float,
     plafond_haut: int = 5,
     statut_lieu: str = criteres.A_VERIFIER,
+    delai_heures: float = 2,
 ) -> dict:
     """Dossier + mail pour une offre ; renvoie la ligne candidatures_auto (statut pret / mise_de_cote)."""
     from app.generation.fabrique import fabriquer
 
     ca_id = conn.execute(
-        "INSERT INTO candidatures_auto (offre_id, score) VALUES (%s, %s) RETURNING id",
-        (o["id"], o["score"]),
+        "INSERT INTO candidatures_auto (offre_id, score, depart_le)"
+        " VALUES (%s, %s, now() + make_interval(mins => %s)) RETURNING id",
+        (o["id"], o["score"], round(float(delai_heures) * 60)),
     ).fetchone()["id"]
     conn.commit()
     fab = fabriquer(conn, o["id"])  # CV + LM adaptés (commit interne)
@@ -376,6 +380,15 @@ def preparer(
     )
     if motif:
         _mettre_de_cote(conn, ca_id, o["id"], motif, o["entreprise"] or "?", o["intitule"])
+    else:
+        notifier(
+            conn,
+            "info",
+            f"Candidature prête — {o['entreprise'] or '?'}",
+            f"{o['intitule']} : part toute seule dans {float(delai_heures):g} h."
+            " Onglet « Envois auto » pour l'envoyer tout de suite ou la bloquer.",
+            o["id"],
+        )
     return {"id": ca_id, "motif": motif, "cv_origine": cv_origine}
 
 
@@ -404,7 +417,14 @@ def executer(conn: psycopg.Connection) -> dict:
             detail=f"note {float(o['score']):.0f}/100",
         )
         try:
-            r = preparer(conn, o, seuil, int(s.get("envois_auto_haut_par_jour", 5)), statut_lieu)
+            r = preparer(
+                conn,
+                o,
+                seuil,
+                int(s.get("envois_auto_haut_par_jour", 5)),
+                statut_lieu,
+                float(s.get("delai_envoi_auto_heures", 2)),
+            )
             conn.commit()
             activite.fin(
                 aid,
@@ -440,12 +460,14 @@ def executer(conn: psycopg.Connection) -> dict:
             continue
         bilan["préparées"] += 1
         bilan["mises de côté"] += bool(r["motif"])
-    # 2. Envoyer les candidatures prêtes, dans la limite du plafond du jour.
+    # 2. Envoyer les candidatures prêtes dont le délai est passé (tu as pu les bloquer ou les
+    #    envoyer avant), dans la limite du plafond du jour.
     for a in conn.execute(
         "SELECT a.id, a.offre_id, a.destinataire, e.nom_affiche AS entreprise, o.intitule"
         " FROM candidatures_auto a"
         " JOIN offres o ON o.id = a.offre_id LEFT JOIN entreprises e ON e.id = o.entreprise_id"
-        " WHERE a.statut = 'pret' AND a.destinataire IS NOT NULL ORDER BY a.score DESC"
+        " WHERE a.statut = 'pret' AND a.destinataire IS NOT NULL"
+        " AND (a.depart_le IS NULL OR a.depart_le <= now()) ORDER BY a.score DESC"
     ).fetchall():
         try:
             envoi.envoyer_candidature(conn, a["id"], auto=True)

@@ -69,6 +69,9 @@ de la meilleure à la moins bonne :
    recrutement de son site). **Jamais d'adresse devinée.**
 4. **Mail** d'accompagnement court, jovial et pro, avec le lien du portfolio ; CV et LM joints.
 5. **Envoi automatique** depuis ta boîte Gmail (interrupteur « Envoi automatique ») :
+   - chaque candidature prête attend `delai_envoi_auto_heures` (2 h) : dans l'onglet
+     « Envois auto », « Envoyer maintenant » ou « Ne pas envoyer » ; sans action, elle part
+     au premier passage qui suit le délai ;
    - au plus `envois_auto_par_jour` (10) par jour ;
    - dont au plus `envois_auto_haut_par_jour` (5) notées ≥ `fabrication` (85) ;
    - si le CV adapté est **moins bon** que ton CV d'origine (matching, compatibilité ATS, phrase

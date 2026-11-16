@@ -407,6 +407,9 @@ def envoyer_candidature(
         raise EnvoiImpossible("Candidature préparée introuvable.")
     if ca["statut"] not in ("pret", "mise_de_cote"):
         raise EnvoiImpossible("Cette candidature n'est plus à envoyer.")
+    # « Envoyer maintenant » sur une candidature automatique prête : elle reste automatique
+    # (même interrupteur et même plafond que si elle était partie seule).
+    auto = auto or ca["statut"] == "pret"
     objet, corps = (objet or ca["objet"] or "").strip(), (corps or ca["corps"] or "").strip()
     opposee = conn.execute(
         "SELECT 1 FROM contacts WHERE lower(email) = lower(%s) AND opposition",
