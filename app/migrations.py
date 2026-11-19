@@ -14,6 +14,8 @@ DOSSIER = RACINE / "sql" / "migrations"
 def appliquer() -> list[str]:
     appliquees: list[str] = []
     with connexion() as conn:
+        # L'appli et le travailleur démarrent ensemble : un seul applique, l'autre attend.
+        conn.execute("SELECT pg_advisory_xact_lock(hashtext('emploi_migrations'))")
         conn.execute(
             "CREATE TABLE IF NOT EXISTS schema_migrations"
             " (nom TEXT PRIMARY KEY, appliquee_le TIMESTAMPTZ NOT NULL DEFAULT now())"
