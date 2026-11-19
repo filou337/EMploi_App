@@ -8,6 +8,10 @@ Pour chaque entreprise de `veille_entreprises` :
    alerte -> enrichie au lieu d'être dupliquée ; annonce dont le contenu change -> « modifiée » ;
    offre retirée du site -> « expirée ».
 Premier passage sur une entreprise : un seul résumé, pas une notification par offre.
+
+Entreprises d'une liste de partenaires (app.partenaires) : leurs grands sites carrières
+(Workday, Taleo…) ne sont pas lisibles, alors on cherche aussi leurs offres sur Adzuna,
+une recherche par poste visé dans ta zone, toutes les PAUSE_ADZUNA heures.
 """
 
 import hashlib
@@ -19,13 +23,22 @@ import psycopg
 from app import activite, criteres
 from app.collecte.normalisation import cle_floue, contrat_depuis_intitule
 from app.dedup import meme_offre
+from app.fiches import adzuna
 from app.fiches.ats import Poste, fiche_smartrecruiters
 from app.fiches.recherche import _trouver_tableau, sites_employeur
 from app.notifications import notifier
+from app.partenaires import meme_entreprise
 
 REESSAI_SANS_SITE = timedelta(
     days=7
 )  # employeur sans site lisible : nouvelle recherche après 7 jours
+# Recherche complète du site carrières (jusqu'à 2 min par employeur) : au plus N par passage,
+# pour qu'une liste de 100 entreprises importée d'un coup ne bloque pas le passage des heures.
+RECHERCHES_PAR_PASSAGE = 8
+PAUSE_ADZUNA = timedelta(hours=6)
+ADZUNA_POSTES_MAX = 6  # requêtes : une par poste visé (et 2 pages au plus)
+ADZUNA_PAGES = 2
+ADZUNA_JOURS = 14
 
 
 def empreinte(p: Poste) -> str:
@@ -61,9 +74,13 @@ class Bilan:
     modifiees: int = 0
     retirees: int = 0
     hors_criteres: int = 0
+    reportees: int = 0
+    partenaires: int = 0
 
     def resume(self) -> dict:
         return {
+            "reportées": self.reportees,
+            "partenaires (Adzuna)": self.partenaires,
             "entreprises": self.entreprises,
             "sans ATS public": len(self.sans_ats),
             "nouvelles": self.nouvelles,
@@ -242,10 +259,116 @@ def _surveiller(conn: psycopg.Connection, ent: dict, crit: dict, bilan: Bilan) -
     return f"{len(gardes)} poste(s) dans tes critères sur {len(tableau.postes)} ({source})"
 
 
+def _recherche_complete(ent: dict) -> bool:
+    """Le site de cet employeur n'est pas encore connu : il faut tout chercher (lent)."""
+    if not ent["ats"]:
+        return True
+    verifie = ent.get("ats_verifie_le")
+    return ent["ats"] == "aucun" and (
+        verifie is None or datetime.now(UTC) - verifie >= REESSAI_SANS_SITE
+    )
+
+
+def _employeur(partenaires: list[dict], nom: str) -> dict | None:
+    return next((p for p in partenaires if nom and meme_entreprise(p["nom"], nom)), None)
+
+
+def partenaires_adzuna(conn: psycopg.Connection, crit: dict, forcer: bool = False) -> int:
+    """Offres des entreprises partenaires trouvées sur Adzuna et ajoutées au pipeline."""
+    params = criteres.lire(conn)["veille"]
+    derniere = params.get("partenaires_adzuna_le")
+    if (
+        not forcer
+        and derniere
+        and (datetime.now(UTC) - datetime.fromisoformat(derniere) < PAUSE_ADZUNA)
+    ):
+        return 0
+    partenaires = conn.execute(
+        """
+        SELECT e.id, coalesce(e.nom_affiche, e.nom_norm) AS nom, v.liste
+        FROM veille_entreprises v JOIN entreprises e ON e.id = v.entreprise_id
+        WHERE v.active AND v.liste IS NOT NULL
+        """
+    ).fetchall()
+    if not partenaires or not adzuna.disponible():
+        return 0
+    zone = criteres.rayon(crit)
+    where, km = zone if zone else (None, None)
+    nouvelles: list[tuple[str, str]] = []
+    vus: set[str] = set()
+    for quoi in crit["postes"][:ADZUNA_POSTES_MAX]:
+        for page in range(1, ADZUNA_PAGES + 1):
+            annonces = adzuna.rechercher(quoi, where, km, ADZUNA_JOURS, page, recentes_d_abord=True)
+            for a in annonces:
+                p, url = a.poste, a.poste.url.split("?")[0]
+                if not url or url in vus:
+                    continue
+                vus.add(url)
+                ent = _employeur(partenaires, a.entreprise)
+                if ent is None or criteres.refus(p.titre, p.lieu, crit, conn):
+                    continue
+                cle = cle_floue(ent["nom"], p.titre, p.lieu)
+                if conn.execute(
+                    "SELECT 1 FROM offres WHERE url_cle = %s", (url,)
+                ).fetchone() or any(
+                    meme_offre(o["cle_floue"], cle, o["intitule"] or "", p.titre)
+                    for o in conn.execute(
+                        "SELECT cle_floue, intitule FROM offres WHERE entreprise_id = %s",
+                        (ent["id"],),
+                    )
+                ):
+                    continue  # déjà reçue (alerte, site carrières ou passage précédent)
+                oid = conn.execute(
+                    """
+                    INSERT INTO offres (url_cle, cle_floue, entreprise_id, source, intitule, ville,
+                                        contrat, texte, fiche_complete, statut_validite,
+                                        date_publication, verifiee_le, note_validite, etape,
+                                        etape_maj_le)
+                    VALUES (%s, %s, %s, 'adzuna', %s, %s, %s, NULLIF(%s, ''), FALSE, 'valide', %s,
+                            now(), %s, 'reperee', now())
+                    ON CONFLICT (url_cle) DO NOTHING RETURNING id
+                    """,
+                    (
+                        url,
+                        cle,
+                        ent["id"],
+                        p.titre,
+                        p.lieu or None,
+                        contrat_depuis_intitule(p.titre),
+                        p.texte,
+                        p.publie_le,
+                        f"trouvée sur Adzuna (liste « {ent['liste']} »)",
+                    ),
+                ).fetchone()
+                if oid:
+                    nouvelles.append((ent["nom"], p.titre))
+                    activite.noter(
+                        "veille",
+                        "Nouvelle offre chez un partenaire",
+                        entreprise=ent["nom"],
+                        intitule=p.titre,
+                    )
+            if len(annonces) < 50:
+                break
+    criteres.ecrire(
+        conn, "veille", {**params, "partenaires_adzuna_le": datetime.now(UTC).isoformat()}
+    )
+    if nouvelles:
+        noms = sorted({n for n, _ in nouvelles})
+        notifier(
+            conn,
+            "nouvelle_offre",
+            f"{len(nouvelles)} nouvelle(s) offre(s) chez tes partenaires",
+            ", ".join(noms[:6]) + (" …" if len(noms) > 6 else "") + " — onglet Veille.",
+        )
+    return len(nouvelles)
+
+
 def executer(conn: psycopg.Connection) -> dict:
     initialiser(conn)
     crit = criteres.lire(conn)["criteres"]
     bilan = Bilan()
+    recherches = 0
     for ent in conn.execute(
         """
         SELECT v.id, v.entreprise_id, v.derniere_veille, e.nom_affiche, e.nom_norm, e.ats, e.ats_slug,
@@ -254,6 +377,11 @@ def executer(conn: psycopg.Connection) -> dict:
         WHERE v.active ORDER BY v.derniere_veille NULLS FIRST
         """
     ).fetchall():
+        if _recherche_complete(ent):
+            if recherches >= RECHERCHES_PAR_PASSAGE:
+                bilan.reportees += 1  # site cherché à un prochain passage
+                continue
+            recherches += 1
         bilan.entreprises += 1
         with conn.transaction():
             note = _surveiller(conn, ent, crit, bilan)
@@ -261,4 +389,6 @@ def executer(conn: psycopg.Connection) -> dict:
                 "UPDATE veille_entreprises SET derniere_veille = now(), note = %s WHERE id = %s",
                 (note, ent["id"]),
             )
+    with conn.transaction():
+        bilan.partenaires = partenaires_adzuna(conn, crit)
     return bilan.resume()

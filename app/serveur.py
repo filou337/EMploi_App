@@ -23,7 +23,7 @@ from openpyxl.styles import Font, PatternFill
 from psycopg.types.json import Jsonb
 from pydantic import BaseModel, Field
 
-from app import criteres, documents, llm, orchestrateur
+from app import criteres, documents, llm, orchestrateur, partenaires
 from app.ats import service as ats
 from app.collecte.normalisation import sans_accents
 from app.config import RACINE
@@ -960,11 +960,36 @@ def entreprises_surveillees(conn: Conn = Depends(db)):
         SELECT v.id, v.origine, v.active, v.ajoutee_le, v.derniere_veille, v.note,
                e.id AS entreprise_id, e.nom_affiche, e.ats, e.ats_slug,
                (SELECT count(*) FROM offres o WHERE o.entreprise_id = e.id AND o.etape IS NOT NULL
-                AND o.statut_validite IN ('a_verifier', 'valide')) AS offres_pipeline
+                AND o.statut_validite IN ('a_verifier', 'valide')) AS offres_pipeline,
+               v.liste, e.secteur
         FROM veille_entreprises v JOIN entreprises e ON e.id = v.entreprise_id
         ORDER BY v.active DESC, e.nom_affiche
         """
     ).fetchall()
+
+
+@app.get("/api/veille/partenaires")
+def offres_partenaires(jours: int = Query(30, ge=1, le=365), conn: Conn = Depends(db)):
+    """Offres en cours chez les entreprises des listes de partenaires, les plus récentes d'abord."""
+    return conn.execute(
+        "SELECT * FROM v_offres_partenaires WHERE recu_le > now() - make_interval(days => %s)"
+        " ORDER BY recu_le DESC LIMIT 300",
+        (jours,),
+    ).fetchall()
+
+
+@app.post("/api/veille/partenaires/import")
+async def importer_partenaires(
+    fichier: UploadFile = File(...), liste: str = Form(...), conn: Conn = Depends(db)
+):
+    """Excel Entreprise / Secteur / Site carrière : chaque entreprise rejoint la veille."""
+    contenu = await fichier.read()
+    if len(contenu) > 5 * 1024 * 1024:
+        raise HTTPException(400, "Fichier trop lourd (5 Mo maximum).")
+    try:
+        return partenaires.importer(conn, partenaires.lire(fichier.filename or "", contenu), liste)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
 
 
 class NouvelleVeille(BaseModel):

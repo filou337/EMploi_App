@@ -1455,6 +1455,15 @@ function carteOffre(o, etape) {
 async function vueVeille(v) {
   const [ents, params, etat] = await Promise.all([api("veille/entreprises"), api("parametres"), api("veille/etat")]);
   const c = params.criteres, s = params.seuils;
+  const ligneEnt = (x) => `<li data-id="${x.id}"><span><strong>${esc(x.nom_affiche)}</strong>
+          ${x.origine === "auto" ? '<span class="etiquette">par défaut</span>' : ""}
+          ${x.ats && x.ats !== "aucun" ? `<span class="etiquette vert">${esc(x.ats)}</span>` : x.ats === "aucun" ? '<span class="etiquette ambre">pas d\'ATS public</span>' : ""}
+          <div class="sous">${x.secteur ? `${esc(x.secteur)} · ` : ""}${x.derniere_veille ? `vue ${depuis(x.derniere_veille)} · ` : "jamais vue · "}${esc(x.note || "")}
+          ${x.offres_pipeline ? ` · ${x.offres_pipeline} dans le pipeline` : ""}</div></span>
+          <span class="actions"><label class="case"><input type="checkbox" data-active ${x.active ? "checked" : ""}> active</label>
+          <button class="bouton petit" data-retirer>Retirer</button></span></li>`;
+  const listes = [...new Set(ents.filter((x) => x.liste).map((x) => x.liste))].sort();
+  const seules = ents.filter((x) => !x.liste);
   v.innerHTML = `<div class="entete"><div><h1>La veille des offres.</h1>
     <p>L'agent Veille interroge le site carrières de ces entreprises toutes les ${params.veille.frequence_minutes} min
     (Greenhouse, Lever, Ashby, SmartRecruiters, Recruitee). Sans ATS public, abonne-toi à leurs alertes officielles avec ta boîte Gmail :
@@ -1462,17 +1471,24 @@ async function vueVeille(v) {
     <div class="actions"><button class="bouton" id="b-sans-gmail">Lancer sans Gmail</button>
       <button class="bouton principal" id="b-lancer">Lancer la veille maintenant</button></div></div>
     <p class="note" id="etat-veille">${etat.en_cours ? "⏳ Passage en cours…" : etat.bilan ? "Dernier passage lancé depuis l'appli terminé." : ""}</p>
+    <div class="carte bloc-partenaires" id="partenaires"><div class="entete-carte"><h3>Nouveaux postes chez tes entreprises partenaires</h3>
+      <div class="actions">${listes.length > 1 ? `<select class="champ" id="p-liste"><option value="">Toutes les listes</option>
+        ${listes.map((l) => `<option>${esc(l)}</option>`).join("")}</select>` : ""}
+        <select class="champ" id="p-jours"><option value="7">7 derniers jours</option><option value="30" selected>30 derniers jours</option>
+          <option value="90">90 derniers jours</option></select>
+        <button class="bouton" id="b-import-partenaires">Importer une liste (Excel)</button></div></div>
+      <p class="note">${listes.length ? `Postes dans tes critères chez les ${ents.filter((x) => x.liste).length} entreprises de ${listes.map((l) => `« ${esc(l)} »`).join(", ")}.
+        Ils viennent de leur site carrières, de tes alertes Gmail et d'Adzuna (toutes les 6 h), et entrent dans le pipeline comme les autres.`
+        : "Importe un Excel (colonnes Entreprise, Secteur, Site carrière) : chaque entreprise rejoint la veille et ses nouveaux postes s'affichent ici."}</p>
+      <div id="p-offres"></div></div>
     <div class="grille-2">
       <div class="carte"><h3>Entreprises surveillées</h3>
         <form class="filtres" id="form-veille"><input class="champ" name="nom" list="sugg" placeholder="SNCF, Air France, Qonto…" required minlength="2">
           <datalist id="sugg"></datalist><button class="bouton principal">Surveiller</button></form>
-        <ul class="liste">${ents.map((x) => `<li data-id="${x.id}"><span><strong>${esc(x.nom_affiche)}</strong>
-          ${x.origine === "auto" ? '<span class="etiquette">par défaut</span>' : ""}
-          ${x.ats && x.ats !== "aucun" ? `<span class="etiquette vert">${esc(x.ats)}</span>` : x.ats === "aucun" ? '<span class="etiquette ambre">pas d\'ATS public</span>' : ""}
-          <div class="sous">${x.derniere_veille ? `vue ${depuis(x.derniere_veille)} · ` : "jamais vue · "}${esc(x.note || "")}
-          ${x.offres_pipeline ? ` · ${x.offres_pipeline} dans le pipeline` : ""}</div></span>
-          <span class="actions"><label class="case"><input type="checkbox" data-active ${x.active ? "checked" : ""}> active</label>
-          <button class="bouton petit" data-retirer>Retirer</button></span></li>`).join("") || '<li class="note">Aucune entreprise : ajoute-en une.</li>'}</ul></div>
+        <ul class="liste">${seules.map(ligneEnt).join("") || `<li class="note">${listes.length ? "Aucune autre entreprise." : "Aucune entreprise : ajoute-en une."}</li>`}</ul>
+        ${listes.map((l) => { const g = ents.filter((x) => x.liste === l);
+          return `<details class="groupe-liste"><summary><strong>${esc(l)}</strong> · ${g.length} entreprise(s), ${g.filter((x) => x.active).length} active(s)</summary>
+            <ul class="liste">${g.map(ligneEnt).join("")}</ul></details>`; }).join("")}</div>
       <div class="carte"><h3>Tes critères</h3><form class="formulaire" id="form-criteres">
         <label>Postes recherchés (séparés par des virgules)<textarea class="champ" name="postes" style="min-height:70px">${esc(c.postes.join(", "))}</textarea></label>
         <div class="ligne"><label>Contrats à EXCLURE (jamais proposés ni envoyés)<input class="champ" name="contrats_exclus" placeholder="stage, alternance, freelance, interim" value="${esc(c.contrats_exclus.join(", "))}"></label>
@@ -1509,15 +1525,57 @@ async function vueVeille(v) {
     try { await envoyer("veille/entreprises", "POST", { nom: new FormData(e.target).get("nom") }); toast("Entreprise ajoutée à la veille."); vueVeille(v); }
     catch (err) { toast(err.message); }
   });
-  v.querySelector(".liste").addEventListener("change", async (e) => {
+  v.querySelectorAll(".liste").forEach((ul) => ul.addEventListener("change", async (e) => {
     if (!e.target.matches("[data-active]")) return;
     await envoyer(`veille/entreprises/${e.target.closest("li").dataset.id}`, "PATCH", { active: e.target.checked });
-  });
-  v.querySelector(".liste").addEventListener("click", async (e) => {
+  }));
+  v.querySelectorAll(".liste").forEach((ul) => ul.addEventListener("click", async (e) => {
     if (!e.target.matches("[data-retirer]")) return;
     await api(`veille/entreprises/${e.target.closest("li").dataset.id}`, { method: "DELETE" });
     vueVeille(v);
+  }));
+  const chargerPartenaires = async () => {
+    const zone = $("#p-offres");
+    if (!listes.length) { zone.innerHTML = ""; return; }
+    let rows = await api(`veille/partenaires?jours=${$("#p-jours").value}`);
+    const l = $("#p-liste")?.value;
+    if (l) rows = rows.filter((r) => r.liste === l);
+    const recente = (d) => Date.now() - new Date(d) < 3 * 864e5;
+    zone.innerHTML = rows.length ? `<div class="table-defile"><table><thead><tr><th>Repéré</th><th>Entreprise</th><th>Poste</th><th>Où en es-tu</th><th></th></tr></thead>
+      <tbody>${rows.map((r) => `<tr data-offre="${r.id}">
+        <td class="num">${depuis(r.recu_le)}${recente(r.recu_le) ? ' <span class="etiquette sarcelle">nouveau</span>' : ""}</td>
+        <td><strong>${esc(r.entreprise || "—")}</strong><div class="sous">${esc(r.secteur || "")}</div></td>
+        <td><a href="#" data-detail>${esc(r.intitule || "—")}</a><div class="sous">${esc([r.ville, r.contrat].filter(Boolean).join(" · ") || "lieu non précisé")}
+          ${r.lieu_statut === "a_verifier" ? " · lieu à vérifier" : ""}</div></td>
+        <td>${r.candidature ? `<span class="etiquette vert">${esc(r.candidature)}</span>` : esc(ETAPES.find((e) => e[0] === r.etape)?.[1] ?? "—")}
+          ${r.score_matching != null ? `<div class="sous">matching ${Math.round(r.score_matching)}/100</div>` : ""}</td>
+        <td>${r.lien ? `<a class="bouton petit" href="${esc(r.lien)}" target="_blank" rel="noopener">Annonce</a>` : ""}</td></tr>`).join("")}</tbody></table></div>`
+      : '<p class="vide">Aucun poste dans tes critères sur la période. La veille continue de chercher.</p>';
+  };
+  $("#p-offres").addEventListener("click", (e) => {
+    if (!e.target.matches("[data-detail]")) return;
+    e.preventDefault();
+    detailOffre(+e.target.closest("[data-offre]").dataset.offre);
   });
+  $("#p-jours").onchange = chargerPartenaires;
+  if ($("#p-liste")) $("#p-liste").onchange = chargerPartenaires;
+  $("#b-import-partenaires").onclick = () => {
+    const corps = ouvrir("Importer une liste d'entreprises", `<form class="formulaire" id="form-partenaires">
+      <p class="note">Fichier .xlsx dont la première ligne donne les titres : Entreprise (obligatoire), Secteur, Site carrière.
+      Chaque entreprise rejoint la veille ; réimporter le même fichier ne crée pas de doublon.</p>
+      <label>Nom de la liste<input class="champ" name="liste" required maxlength="80" placeholder="ex. Partenaires de mon accompagnement" value="${esc(listes[0] || "")}"></label>
+      <input class="champ" type="file" name="fichier" accept=".xlsx" required>
+      <p class="erreur" id="err-partenaires"></p>
+      <div class="actions"><button class="bouton principal">Importer</button></div></form>`);
+    $("#form-partenaires", corps).addEventListener("submit", async (e) => {
+      e.preventDefault();
+      try {
+        const r = await api("veille/partenaires/import", { method: "POST", body: new FormData(e.target) });
+        fermer(); toast(`« ${r.liste} » : ${r.ajoutees} entreprise(s) ajoutée(s), ${r.deja_surveillees} déjà surveillée(s).`); vueVeille(v);
+      } catch (err) { $("#err-partenaires").textContent = err.message; }
+    });
+  };
+  chargerPartenaires().catch((err) => { $("#p-offres").innerHTML = `<p class="erreur">${esc(err.message)}</p>`; });
   const lancer = async (gmail) => {
     const r = await api(`veille/lancer?gmail=${gmail}`, { method: "POST" });
     toast(r.deja_en_cours ? "Un passage est déjà en cours." : "Veille lancée : suis-la dans le salon.");

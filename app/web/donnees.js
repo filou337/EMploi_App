@@ -254,6 +254,14 @@ const ROUTES = [
     return { ok: true };
   }],
   ["DELETE", /^veille\/entreprises\/(\d+)$/, async (m) => { verifier(await sb.from("veille_entreprises").delete().eq("id", m[1])); return { ok: true }; }],
+  ["GET", /^veille\/partenaires$/, async (_m, q) => {
+    const depuis = new Date(Date.now() - (+q.get("jours") || 30) * 864e5).toISOString();
+    return verifier(await sb.from("v_offres_partenaires").select("*").gt("recu_le", depuis).order("recu_le", { ascending: false }).limit(300));
+  }],
+  ["POST", /^veille\/partenaires\/import$/, async (_m, _q, o) => {
+    const fichier = o.body.get("fichier");
+    return attendreDemande(await deposerDemande("importer_partenaires", { liste: o.body.get("liste") }, fichier));
+  }],
   ["GET", /^veille\/suggestions$/, async (_m, q) => {
     const t = (q.get("q") || "").trim();
     if (t.length < 2) return [];

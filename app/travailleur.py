@@ -70,6 +70,11 @@ def executer(conn: psycopg.Connection, d: dict) -> tuple[dict, bytes | None]:
             else:
                 ajoutees += 1
         return {"ajoutees": ajoutees, "deja_presentes": doublons}, None
+    if t == "importer_partenaires":
+        from app import partenaires
+
+        lignes = partenaires.lire(d["nom_fichier"] or "", bytes(d["fichier"] or b""))
+        return partenaires.importer(conn, lignes, p.get("liste", "")), None
     if t == "exporter_excel":
         from app.serveur import classeur_excel
 

@@ -50,7 +50,13 @@ Sans fiche complète, une offre est plafonnée à 84/100. Ne consulte jamais Lin
 
 ## 5. Veille
 Surveille le site carrières des entreprises de ta liste de veille : nouveaux postes qui passent
-tes critères, annonces modifiées, postes retirés.
+tes critères, annonces modifiées, postes retirés. Au plus 8 nouveaux sites cherchés par passage.
+
+**Listes de partenaires** : un Excel (Entreprise, Secteur, Site carrière) importé dans l'onglet
+Veille, ou `python -m app.partenaires fichier.xlsx --liste "Nom"`, met toutes ses entreprises
+en veille sous ce nom. Leurs grands sites (Workday, Taleo…) n'étant pas lisibles, l'agent cherche
+aussi leurs offres sur Adzuna toutes les 6 h (clés `ADZUNA_APP_ID` / `ADZUNA_APP_KEY`). Les postes
+retenus s'affichent en tête de l'onglet Veille et entrent dans le pipeline.
 
 ## 6. Matching
 Fait entrer dans le pipeline les offres qui passent tes critères (poste, contrat, lieu), compare

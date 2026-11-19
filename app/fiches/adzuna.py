@@ -30,20 +30,37 @@ def disponible() -> bool:
 
 def chercher(intitule: str, ville: str) -> list[Annonce]:
     """Annonces Adzuna de moins de 30 jours proches de cet intitulé (une requête)."""
+    where = ville.split(",")[0].split("(")[0].strip() if norm_ville(ville or "") else None
+    return rechercher(" ".join(norm_intitule(intitule).split()[:5]), where)
+
+
+def rechercher(
+    quoi: str,
+    where: str | None = None,
+    distance_km: float | None = None,
+    jours: int = 30,
+    page: int = 1,
+    recentes_d_abord: bool = False,
+) -> list[Annonce]:
+    """Une page (50 annonces au plus) de la recherche Adzuna."""
     cles = adzuna()
     if cles is None:
         return []
     params = {
         "app_id": cles[0],
         "app_key": cles[1],
-        "what": " ".join(norm_intitule(intitule).split()[:5]),
+        "what": quoi,
         "results_per_page": 50,
-        "max_days_old": 30,
+        "max_days_old": jours,
         "content-type": "application/json",
     }
-    if norm_ville(ville or ""):
-        params["where"] = ville.split(",")[0].split("(")[0].strip()
-    j = get_json(URL, params)
+    if recentes_d_abord:
+        params["sort_by"] = "date"
+    if where:
+        params["where"] = where
+        if distance_km:
+            params["distance"] = round(distance_km)
+    j = get_json(URL.removesuffix("/1") + f"/{page}", params)
     if not isinstance(j, dict):
         return []
     return [
