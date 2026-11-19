@@ -68,9 +68,20 @@ def cle_floue(entreprise: str, intitule: str, lieu: str) -> str:
 def contrat_depuis_intitule(intitule: str) -> str | None:
     """Type de contrat quand l'intitulé le dit ; None sinon (à lire dans la fiche)."""
     mots = set(_mots(intitule))
-    if mots & {"stage", "stagiaire", "intern", "internship"}:
+    if mots & {"stage", "stages", "stagiaire", "stagiaires", "intern", "interns", "internship"}:
         return "stage"
-    if mots & {"alternance", "alternant", "apprenti", "apprentissage"}:
+    if mots & {
+        "alternance",
+        "alternant",
+        "alternante",
+        "alternants",
+        "apprenti",
+        "apprentie",
+        "apprentis",
+        "apprentissage",
+        "apprentice",
+        "apprenticeship",
+    }:
         return "alternance"
     for contrat in ("cdi", "cdd", "freelance"):
         if contrat in mots:

@@ -12,6 +12,7 @@ import psycopg
 
 from app import activite, criteres, llm, scoring
 from app.ats import service as ats
+from app.collecte.normalisation import contrat_depuis_intitule
 from app.dedup import candidature_recente
 from app.notifications import notifier
 
@@ -34,11 +35,40 @@ def reperer(conn: psycopg.Connection, crit: dict) -> int:
     return len(ids)
 
 
+def retirer_contrats_exclus(conn: psycopg.Connection, crit: dict) -> int:
+    """Sort du pipeline les offres encore « Repérées » dont le contrat est exclu (stage,
+    alternance…) : entrées avant le réglage, ou détection améliorée depuis. Les offres plus
+    avancées, candidatées ou ajoutées à la main ne bougent pas."""
+    exclus = {c.lower() for c in crit["contrats_exclus"]}
+    rows = conn.execute(
+        """
+        SELECT o.id, o.intitule FROM offres o
+        WHERE o.etape = 'reperee' AND o.source <> 'manuelle' AND o.envoi_auto_demande_le IS NULL
+          AND NOT EXISTS (SELECT 1 FROM candidatures c WHERE c.offre_id = o.id)
+        """
+    ).fetchall()
+    ids = [
+        r["id"]
+        for r in rows
+        if (contrat_depuis_intitule(r["intitule"] or "") or "").lower() in exclus
+    ]
+    if ids:
+        conn.execute(
+            "UPDATE offres SET etape = NULL, etape_maj_le = now() WHERE id = ANY(%s)", (ids,)
+        )
+    return len(ids)
+
+
 def executer(conn: psycopg.Connection) -> dict:
     params = criteres.lire(conn)
     seuils = params["seuils"]
     criteres.situer_offres(conn, params["criteres"])
-    bilan = {"repérées": reperer(conn, params["criteres"]), "analysées": 0, "qualifiées": 0}
+    bilan = {
+        "repérées": reperer(conn, params["criteres"]),
+        "retirées (contrat exclu)": retirer_contrats_exclus(conn, params["criteres"]),
+        "analysées": 0,
+        "qualifiées": 0,
+    }
     if not llm.disponible():
         bilan["note"] = "clé Gemini absente"
         return bilan
